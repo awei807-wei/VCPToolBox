@@ -8,6 +8,7 @@ const FileFetcherServer = require('./FileFetcherServer.js');
 const express = require('express'); // For plugin API routing
 const chokidar = require('chokidar');
 const { getAuthCode } = require('./modules/captchaDecoder'); // 导入统一的解码函数
+const ToolApprovalManager = require('./modules/toolApprovalManager');
 
 const PLUGIN_DIR = path.join(__dirname, 'Plugin');
 const manifestFileName = 'plugin-manifest.json';
@@ -28,6 +29,8 @@ class PluginManager {
         this.isReloading = false;
         this.reloadTimeout = null;
         this.vectorDBManager = null; // 修复：不再自己创建，等待注入
+        this.toolApprovalManager = new ToolApprovalManager(path.join(__dirname, 'toolApprovalConfig.json'));
+        this.pendingApprovals = new Map(); // requestId -> { resolve, reject, timeoutId }
     }
 
     setWebSocketServer(wss) {
@@ -687,6 +690,90 @@ class PluginManager {
             // delete pluginSpecificArgs.maid;
         }
 
+        // --- 预先拉取所有的异地文件，将其透明化 ---
+        // 逻辑漏洞修复：如果是分布式插件，则不进行预拉取，直接透传 file:// 协议，由分布式端自行处理
+        if (!plugin.isDistributed) {
+            const resolveArgsUrls = async (obj) => {
+                if (!obj || typeof obj !== 'object') return;
+                for (const key of Object.keys(obj)) {
+                    const val = obj[key];
+                    if (typeof val === 'string') {
+                        if (val.startsWith('file://')) {
+                            if (this.debugMode) console.log(`[PluginManager] Intercepted file URL in args: ${val}`);
+                            obj[key] = await FileFetcherServer.resolveFileUrl(val, requestIp);
+                        } else if (val.includes('file://')) {
+                            const fileRegex = /file:\/\/[^\s"'()\]]+/g;
+                            const matches = val.match(fileRegex);
+                            if (matches) {
+                                let newVal = val;
+                                for (const matchUrl of matches) {
+                                    if (this.debugMode) console.log(`[PluginManager] Intercepted embedded file URL in args: ${matchUrl}`);
+                                    const resolvedUrl = await FileFetcherServer.resolveFileUrl(matchUrl, requestIp);
+                                    newVal = newVal.split(matchUrl).join(resolvedUrl); // replaceAll fallback
+                                }
+                                obj[key] = newVal;
+                            }
+                        }
+                    } else if (typeof val === 'object' && val !== null) {
+                        await resolveArgsUrls(val);
+                    }
+                }
+            };
+
+            try {
+                await resolveArgsUrls(pluginSpecificArgs);
+            } catch (resolveError) {
+                throw new Error(JSON.stringify({ plugin_error: `Failed to pre-fetch files: ${resolveError.message}` }));
+            }
+        }
+        // --- 透明化处理结束 ---
+
+        // --- 人工审核逻辑 (新增) ---
+        if (this.toolApprovalManager.shouldApprove(toolName)) {
+            const requestId = `approve-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+            if (this.debugMode) console.log(`[PluginManager] Tool call for "${toolName}" requires manual approval. Request ID: ${requestId}`);
+
+            const approvalPromise = new Promise((resolve, reject) => {
+                const timeoutDuration = this.toolApprovalManager.getTimeoutMs();
+                const timeoutId = setTimeout(() => {
+                    if (this.pendingApprovals.has(requestId)) {
+                        this.pendingApprovals.delete(requestId);
+                        reject(new Error(JSON.stringify({ plugin_error: `Manual approval for "${toolName}" timed out after ${timeoutDuration / 60000} minutes.` })));
+                    }
+                }, timeoutDuration);
+
+                this.pendingApprovals.set(requestId, { resolve, reject, timeoutId });
+            });
+
+            // 发送审核请求到管理面板
+            if (this.webSocketServer) {
+                const approvalRequest = {
+                    type: 'tool_approval_request',
+                    data: {
+                        requestId,
+                        toolName,
+                        maid: maidNameFromArgs,
+                        args: pluginSpecificArgs,
+                        timestamp: _getFormattedLocalTimestamp()
+                    }
+                };
+                this.webSocketServer.broadcast(approvalRequest, 'VCPLog');
+                console.log(`[PluginManager] 🔔 正在等待工具调用人工审核: ${toolName} (ID: ${requestId})`);
+            } else {
+                this.pendingApprovals.delete(requestId);
+                throw new Error(JSON.stringify({ plugin_error: 'WebSocketServer not initialized, cannot request manual approval.' }));
+            }
+
+            try {
+                await approvalPromise;
+                if (this.debugMode) console.log(`[PluginManager] Tool call for "${toolName}" (ID: ${requestId}) approved.`);
+            } catch (error) {
+                if (this.debugMode) console.warn(`[PluginManager] Tool call for "${toolName}" (ID: ${requestId}) rejected: ${error.message}`);
+                throw error;
+            }
+        }
+        // --- 人工审核逻辑结束 ---
+
         try {
             let resultFromPlugin;
             if (plugin.isDistributed) {
@@ -749,54 +836,7 @@ class PluginManager {
                         resultFromPlugin = pluginOutput.result;
                     }
                 } else {
-                    // 检查是否是文件未找到的特定错误
-                    if (pluginOutput.code === 'FILE_NOT_FOUND_LOCALLY' && pluginOutput.fileUrl && requestIp) {
-                        if (this.debugMode) console.log(`[PluginManager] Plugin '${toolName}' reported local file not found. Attempting to fetch via FileFetcherServer...`);
-
-                        try {
-                            const { buffer, mimeType } = await FileFetcherServer.fetchFile(pluginOutput.fileUrl, requestIp);
-                            const base64Data = buffer.toString('base64');
-                            const dataUri = `data:${mimeType};base64,${base64Data}`;
-
-                            if (this.debugMode) console.log(`[PluginManager] Successfully fetched file as data URI. Retrying plugin call...`);
-
-                            // 新的重试逻辑：精确替换失败的参数
-                            const newToolArgs = { ...toolArgs };
-                            const failedParam = pluginOutput.failedParameter; // e.g., "image_url1"
-
-                            if (failedParam && newToolArgs[failedParam]) {
-                                // 删除旧的 file:// url 参数
-                                delete newToolArgs[failedParam];
-
-                                // 添加新的 base64 参数。我们使用一个新的键来避免命名冲突，
-                                // 并且让插件知道这是一个已经处理过的 base64 数据。
-                                // e.g., "image_base64_1"
-                                // 关键修复：确保正确地从 "image_url_1" 提取出 "1"
-                                const paramIndex = failedParam.replace('image_url_', '');
-                                const newParamKey = `image_base64_${paramIndex}`;
-                                newToolArgs[newParamKey] = dataUri;
-
-                                if (this.debugMode) console.log(`[PluginManager] Retrying with '${failedParam}' replaced by '${newParamKey}'.`);
-
-                            } else {
-                                // 旧的后备逻辑，用于兼容单个 image_url 的情况
-                                delete newToolArgs.image_url;
-                                newToolArgs.image_base64 = dataUri;
-                                if (this.debugMode) console.log(`[PluginManager] 'failedParameter' not specified. Falling back to replacing 'image_url' with 'image_base64'.`);
-                            }
-
-                            // 直接返回重试调用的结果
-                            return await this.processToolCall(toolName, newToolArgs, requestIp);
-
-                        } catch (fetchError) {
-                            throw new Error(JSON.stringify({
-                                plugin_error: `Plugin reported local file not found, but remote fetch failed: ${fetchError.message}`,
-                                original_plugin_error: pluginOutput.error
-                            }));
-                        }
-                    } else {
-                        throw new Error(JSON.stringify({ plugin_error: pluginOutput.error || `Plugin "${toolName}" reported an unspecified error.` }));
-                    }
+                    throw new Error(JSON.stringify({ plugin_error: pluginOutput.error || `Plugin "${toolName}" reported an unspecified error.` }));
                 }
             }
 
@@ -879,6 +919,10 @@ class PluginManager {
         const imageServerKey = this.getResolvedPluginConfigValue('ImageServer', 'Image_Key');
         if (imageServerKey) {
             additionalEnv.IMAGESERVER_IMAGE_KEY = imageServerKey;
+        }
+        const fileServerKey = this.getResolvedPluginConfigValue('ImageServer', 'File_Key');
+        if (fileServerKey) {
+            additionalEnv.IMAGESERVER_FILE_KEY = fileServerKey;
         }
 
         // Pass CALLBACK_BASE_URL and PLUGIN_NAME to asynchronous plugins
@@ -1053,6 +1097,21 @@ class PluginManager {
                 }
             }
         });
+    }
+
+    handleApprovalResponse(requestId, approved) {
+        const approval = this.pendingApprovals.get(requestId);
+        if (approval) {
+            this.pendingApprovals.delete(requestId);
+            clearTimeout(approval.timeoutId);
+            if (approved) {
+                approval.resolve();
+            } else {
+                approval.reject(new Error(JSON.stringify({ plugin_error: 'Manual approval was REJECTED by user.' })));
+            }
+            return true;
+        }
+        return false;
     }
 
     initializeServices(app, adminApiRouter, projectBasePath) {

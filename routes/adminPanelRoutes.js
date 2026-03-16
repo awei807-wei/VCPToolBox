@@ -14,9 +14,12 @@ const blockedManifestExtension = '.block';
 // 记录每个日志文件的 inode，用于检测日志轮转
 const logFileInodes = new Map();
 
-module.exports = function (DEBUG_MODE, dailyNoteRootPath, pluginManager, getCurrentServerLogPath, vectorDBManager, agentDirPath) {
+module.exports = function (DEBUG_MODE, dailyNoteRootPath, pluginManager, getCurrentServerLogPath, vectorDBManager, agentDirPath, cachedEmojiLists, tvsDirPath) {
     if (!agentDirPath || typeof agentDirPath !== 'string') {
         throw new Error('[AdminPanelRoutes] agentDirPath must be a non-empty string');
+    }
+    if (!tvsDirPath || typeof tvsDirPath !== 'string') {
+        throw new Error('[AdminPanelRoutes] tvsDirPath must be a non-empty string');
     }
 
     const adminApiRouter = express.Router();
@@ -129,8 +132,11 @@ module.exports = function (DEBUG_MODE, dailyNoteRootPath, pluginManager, getCurr
                 }
 
                 try {
-                    const { stdout: cpuInfo } = await execAsync("top -bn1 | grep 'Cpu(s)' | awk '{print $2}'", execOptions);
-                    systemInfo.cpu = { usage: parseFloat(cpuInfo.trim()) || 0 };
+                    // 不同系统top命令的输出格式不同，需要根据不同的格式来解析CPU使用率
+                    // Procps: "%Cpu(s):  0.3 us, ... 99.7 id,"
+                    // BusyBox: "CPU:   2% usr ... 97% idle"
+                    const { stdout: cpuInfo } = await execAsync("top -bn1 | grep -E '^\\s*(%?Cpu\\(s\\)?:|CPU:)' | head -1 | awk '{print $2}'", execOptions);
+                    systemInfo.cpu = { usage: parseFloat(cpuInfo.trim().replace('%', '')) || 0 };
                 } catch (cpuErr) {
                     systemInfo.cpu = { usage: 0 };
                 }
@@ -296,7 +302,37 @@ module.exports = function (DEBUG_MODE, dailyNoteRootPath, pluginManager, getCurr
             res.status(500).json({ error: 'Failed to clear server log file', details: error.message });
         }
     });
-    // --- End Server Log API ---
+    // --- Tool Approval Config API ---
+    adminApiRouter.get('/tool-approval-config', async (req, res) => {
+        const configPath = path.join(__dirname, '..', 'toolApprovalConfig.json');
+        try {
+            const content = await fs.readFile(configPath, 'utf-8');
+            res.json(JSON.parse(content));
+        } catch (error) {
+            if (error.code === 'ENOENT') {
+                res.json({ enabled: false, timeoutMinutes: 5, approveAll: false, approvalList: [] });
+            } else {
+                console.error('[AdminPanelRoutes API] Error reading tool approval config:', error);
+                res.status(500).json({ error: 'Failed to read tool approval config', details: error.message });
+            }
+        }
+    });
+
+    adminApiRouter.post('/tool-approval-config', async (req, res) => {
+        const { config } = req.body;
+        if (typeof config !== 'object' || config === null) {
+            return res.status(400).json({ error: 'Invalid configuration data. Object expected.' });
+        }
+        const configPath = path.join(__dirname, '..', 'toolApprovalConfig.json');
+        try {
+            await fs.writeFile(configPath, JSON.stringify(config, null, 2), 'utf-8');
+            res.json({ success: true, message: '工具调用审核配置已成功保存。' });
+        } catch (error) {
+            console.error('[AdminPanelRoutes API] Error writing tool approval config:', error);
+            res.status(500).json({ error: 'Failed to write tool approval config', details: error.message });
+        }
+    });
+    // --- End Tool Approval Config API ---
     // GET main config.env content (filtered)
     adminApiRouter.get('/config/main', async (req, res) => {
         try {
@@ -994,7 +1030,7 @@ module.exports = function (DEBUG_MODE, dailyNoteRootPath, pluginManager, getCurr
     // --- End Agent Files API ---
 
     // --- TVS Variable Files API ---
-    const TVS_FILES_DIR = path.join(__dirname, '..', 'TVStxt'); // 定义 TVS 文件目录
+    const TVS_FILES_DIR = tvsDirPath; // 使用传入的 TVS 文件目录
 
     // GET list of TVS .txt files
     adminApiRouter.get('/tvsvars', async (req, res) => {
@@ -1151,15 +1187,26 @@ module.exports = function (DEBUG_MODE, dailyNoteRootPath, pluginManager, getCurr
             }
             // 2. Tar / Var（env 中以 Tar 或 Var 开头）
             const tvsManager = require('../modules/tvsManager');
+            const emojiPlaceholderRegex = /^[^{}]+?表情包\.txt$/g;
+            const emojiLists = cachedEmojiLists && typeof cachedEmojiLists.get === 'function' ? cachedEmojiLists : new Map();
             const tarVarKeys = Object.keys(process.env).filter(k => k.startsWith('Tar') || k.startsWith('Var'));
             for (const envKey of tarVarKeys) {
                 const raw = process.env[envKey] || '';
                 let preview = raw;
-                if (typeof raw === 'string' && raw.toLowerCase().endsWith('.txt')) {
-                    try {
-                        preview = await tvsManager.getContent(raw);
-                    } catch (e) {
-                        preview = `[读取文件失败: ${e.message}]`;
+                if (typeof raw === 'string') {
+                    if (emojiPlaceholderRegex.test(raw)) {
+                        const emojiName = raw.replace('.txt', '');
+                        const emojiList = emojiLists.get(emojiName);
+                        preview = emojiList || `[${emojiName}列表不可用]`;
+                    } else if (raw.toLowerCase().endsWith('.txt')) {
+                        try {
+                            preview = await tvsManager.getContent(raw);
+                            if (preview.startsWith('[变量文件') || preview.startsWith('[处理变量文件')) {
+                                preview = raw;
+                            }
+                        } catch (e) {
+                            preview = `[读取文件失败: ${e.message}]`;
+                        }
                     }
                 }
                 list.push({ type: 'env_tar_var', name: `{{${envKey}}}`, preview: truncatePreview(preview), charCount: charCount(preview) });
@@ -1169,11 +1216,20 @@ module.exports = function (DEBUG_MODE, dailyNoteRootPath, pluginManager, getCurr
             for (const envKey of sarKeys) {
                 const raw = process.env[envKey] || '';
                 let preview = raw;
-                if (typeof raw === 'string' && raw.toLowerCase().endsWith('.txt')) {
-                    try {
-                        preview = await tvsManager.getContent(raw);
-                    } catch (e) {
-                        preview = raw || '[按模型注入]';
+                if (typeof raw === 'string') {
+                    if (emojiPlaceholderRegex.test(raw)) {
+                        const emojiName = raw.replace('.txt', '');
+                        const emojiList = emojiLists.get(emojiName);
+                        preview = emojiList || `[${emojiName}列表不可用]`;
+                    } else if (raw.toLowerCase().endsWith('.txt')) {
+                        try {
+                            preview = await tvsManager.getContent(raw);
+                            if (preview.startsWith('[变量文件') || preview.startsWith('[处理变量文件')) {
+                                preview = raw;
+                            }
+                        } catch (e) {
+                            preview = raw || '[按模型注入]';
+                        }
                     }
                 }
                 list.push({ type: 'env_sar', name: `{{${envKey}}}`, preview: truncatePreview(preview || '[按模型注入]'), charCount: charCount(preview || '[按模型注入]') });
@@ -1303,11 +1359,21 @@ module.exports = function (DEBUG_MODE, dailyNoteRootPath, pluginManager, getCurr
                     if (envVal === undefined) {
                         return res.status(404).json({ success: false, error: 'Environment variable not found', details: name });
                     }
-                    if (typeof envVal === 'string' && envVal.toLowerCase().endsWith('.txt')) {
-                        const tvsManager = require('../modules/tvsManager');
-                        value = await tvsManager.getContent(envVal);
-                    } else {
-                        value = envVal || '';
+                    value = envVal || '';
+                    if (typeof envVal === 'string') {
+                        const emojiPlaceholderRegex = /^[^{}]+?表情包\.txt$/g;
+                        if (emojiPlaceholderRegex.test(envVal)) {
+                            const emojiName = envVal.replace('.txt', '');
+                            const emojiLists = cachedEmojiLists && typeof cachedEmojiLists.get === 'function' ? cachedEmojiLists : new Map();
+                            const emojiList = emojiLists.get(emojiName);
+                            value = emojiList || `[${emojiName}列表不可用]`;
+                        } else if (envVal.toLowerCase().endsWith('.txt')) {
+                            const tvsManager = require('../modules/tvsManager');
+                            value = await tvsManager.getContent(envVal);
+                            if (value.startsWith('[变量文件') || value.startsWith('[处理变量文件')) {
+                                value = envVal;
+                            }
+                        }
                     }
                     if (type === 'env_sar') {
                         value = value || '[当前未配置或按请求模型注入]';
@@ -2104,7 +2170,7 @@ module.exports = function (DEBUG_MODE, dailyNoteRootPath, pluginManager, getCurr
     adminApiRouter.get('/tool-list-editor/check-file/:fileName', async (req, res) => {
         try {
             const fileName = req.params.fileName;
-            const tvsTxtDir = path.join(PROJECT_BASE_PATH, 'TVStxt');
+            const tvsTxtDir = tvsDirPath;
             const outputPath = path.join(tvsTxtDir, `${fileName}.txt`);
 
             try {
@@ -2125,7 +2191,7 @@ module.exports = function (DEBUG_MODE, dailyNoteRootPath, pluginManager, getCurr
     adminApiRouter.post('/tool-list-editor/export/:fileName', async (req, res) => {
         try {
             const fileName = req.params.fileName;
-            const tvsTxtDir = path.join(PROJECT_BASE_PATH, 'TVStxt');
+            const tvsTxtDir = tvsDirPath;
             const outputPath = path.join(tvsTxtDir, `${fileName}.txt`);
 
             const { selectedTools, toolDescriptions, includeHeader, includeExamples } = req.body;
@@ -2237,7 +2303,7 @@ module.exports = function (DEBUG_MODE, dailyNoteRootPath, pluginManager, getCurr
             });
 
             await fs.writeFile(outputPath, output, 'utf-8');
-            res.json({ status: 'success', filePath: `TVStxt/${fileName}.txt` });
+            res.json({ status: 'success', filePath: `${path.basename(tvsTxtDir)}/${fileName}.txt` });
         } catch (error) {
             console.error('[AdminAPI] Error exporting to txt:', error);
             res.status(500).json({ error: 'Failed to export to txt', details: error.message });
@@ -2489,6 +2555,22 @@ module.exports = function (DEBUG_MODE, dailyNoteRootPath, pluginManager, getCurr
         }
         return fileUrl;
     }
+    // --- AgentAssistant Scores API ---
+    adminApiRouter.get('/agent-assistant/scores', async (req, res) => {
+        const scoresFilePath = path.join(__dirname, '..', 'Plugin', 'AgentAssistant', 'agent_scores.json');
+        try {
+            const content = await fs.readFile(scoresFilePath, 'utf-8');
+            res.json(JSON.parse(content));
+        } catch (error) {
+            if (error.code === 'ENOENT') {
+                res.json({}); // Return empty if file doesn't exist yet
+            } else {
+                console.error('[AdminAPI] Error reading agent scores:', error);
+                res.status(500).json({ error: 'Failed to read agent scores', details: error.message });
+            }
+        }
+    });
+
     // --- End AgentDream API ---
     return adminApiRouter;
 };

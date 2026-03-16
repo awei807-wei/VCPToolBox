@@ -7,8 +7,28 @@ const tvsManager = require('./tvsManager.js'); // 引入新的TVS管理器
 
 const DEFAULT_TIMEZONE = process.env.DEFAULT_TIMEZONE || 'Asia/Shanghai';
 const REPORT_TIMEZONE = process.env.REPORT_TIMEZONE || 'Asia/Shanghai'; // 新增：用于控制 AI 报告的时间，默认回退到中国时区
-const AGENT_DIR = path.join(__dirname, '..', 'Agent');
-const TVS_DIR = path.join(__dirname, '..', 'TVStxt');
+function resolveAgentDir() {
+    const configPath = process.env.AGENT_DIR_PATH;
+    if (!configPath || typeof configPath !== 'string' || configPath.trim() === '') {
+        return path.join(__dirname, '..', 'Agent');
+    }
+    const normalizedPath = path.normalize(configPath.trim());
+    return path.isAbsolute(normalizedPath)
+        ? normalizedPath
+        : path.resolve(__dirname, '..', normalizedPath);
+}
+const AGENT_DIR = resolveAgentDir();
+function resolveTvsDir() {
+    const configPath = process.env.TVSTXT_DIR_PATH;
+    if (!configPath || typeof configPath !== 'string' || configPath.trim() === '') {
+        return path.join(__dirname, '..', 'TVStxt');
+    }
+    const normalizedPath = path.normalize(configPath.trim());
+    return path.isAbsolute(normalizedPath)
+        ? normalizedPath
+        : path.resolve(__dirname, '..', normalizedPath);
+}
+const TVS_DIR = resolveTvsDir();
 const VCP_ASYNC_RESULTS_DIR = path.join(__dirname, '..', 'VCPAsyncResults');
 
 async function resolveAllVariables(text, model, role, context, processingStack = new Set()) {
@@ -16,7 +36,10 @@ async function resolveAllVariables(text, model, role, context, processingStack =
     let processedText = String(text);
 
     // 通用正则表达式，匹配所有 {{...}} 格式的占位符
-    const placeholderRegex = /\{\{([a-zA-Z0-9_:]+)\}\}/g;
+    // CJK Radicals Supplement - Ideographic Description Characters 0x2E80 - 0x2FFF
+    // Hiragana - CJK Unified Ideographs 0x3040 - 0x9FFF
+    // 跳过标点符号 CJK Symbols and Punctuation 0x3000 - 0x303F
+    const placeholderRegex = /\{\{([a-zA-Z0-9_:\u2e80-\u2fff\u3040-\u9fff]+)\}\}/g;
     const matches = [...processedText.matchAll(placeholderRegex)];
 
     // 提取所有潜在的别名（去除 "agent:" 前缀）
@@ -69,26 +92,73 @@ async function resolveDynamicFoldProtocol(foldObj, context, placeholderKey) {
             return fallbackBlock.content;
         }
 
-        // 提取最后一个 User 的消息作为核心比对内容
+        // 提取最后一个 User 和 AI 的消息作为核心比对内容 (原子级复刻 RAGDiaryPlugin 逻辑以命中向量缓存)
         const contextMessages = context.messages || [];
-        let lastUserText = '';
-        for (let i = contextMessages.length - 1; i >= 0; i--) {
-            if (contextMessages[i].role === 'user') {
-                const msgContent = contextMessages[i].content;
-                lastUserText = typeof msgContent === 'string'
-                    ? msgContent
-                    : (Array.isArray(msgContent) ? (msgContent.find(p => p.type === 'text')?.text || '') : '');
-                if (lastUserText) break;
-            }
+
+        const lastUserMessageIndex = contextMessages.findLastIndex(m => {
+            if (m.role !== 'user') return false;
+            const content = typeof m.content === 'string'
+                ? m.content
+                : (Array.isArray(m.content) ? (m.content.find(p => p.type === 'text')?.text || '') : '');
+            return !content.startsWith('[系统邀请指令:]') && !content.trim().startsWith('[系统提示:]无内容');
+        });
+        const lastAiMessageIndex = contextMessages.findLastIndex(m => m.role === 'assistant');
+
+        let userContent = '';
+        let aiContent = null;
+
+        if (lastUserMessageIndex > -1) {
+            const m = contextMessages[lastUserMessageIndex];
+            userContent = typeof m.content === 'string'
+                ? m.content
+                : (Array.isArray(m.content) ? (m.content.find(p => p.type === 'text')?.text || '') : '');
         }
 
-        if (!lastUserText) {
+        if (lastAiMessageIndex > -1) {
+            const m = contextMessages[lastAiMessageIndex];
+            aiContent = typeof m.content === 'string'
+                ? m.content
+                : (Array.isArray(m.content) ? (m.content.find(p => p.type === 'text')?.text || '') : '');
+        }
+
+        if (!userContent) {
             if (context.DEBUG_MODE) console.log(`[DynamicFold] 未找到 User 文本消息，返回基础内容 (${placeholderKey})`);
             return fallbackBlock.content;
         }
 
-        // 获取当前会话上下文向量
-        const userVector = await ragPlugin.getSingleEmbeddingCached(lastUserText);
+        // 调用 RAGDiaryPlugin 的清理方法，确保文本与 RAG 插件完全一致 (命中缓存的关键)
+        if (typeof ragPlugin._stripSystemNotification === 'function') {
+            if (userContent) {
+                const originalUserContent = userContent;
+                userContent = ragPlugin._stripSystemNotification(userContent);
+                userContent = ragPlugin._stripHtml(userContent);
+                userContent = ragPlugin._stripEmoji(userContent);
+                userContent = ragPlugin._stripToolMarkers(userContent);
+                if (context.DEBUG_MODE && originalUserContent.length !== userContent.length) {
+                    console.log('[DynamicFold] User content was sanitized (SystemNotification + HTML + Emoji removed).');
+                }
+            }
+        }
+        if (aiContent && typeof ragPlugin._stripHtml === 'function') {
+            const originalAiContent = aiContent;
+            aiContent = ragPlugin._stripHtml(aiContent);
+            aiContent = ragPlugin._stripEmoji(aiContent);
+            aiContent = ragPlugin._stripToolMarkers(aiContent);
+            if (context.DEBUG_MODE && originalAiContent.length !== aiContent.length) {
+                console.log('[DynamicFold] AI content was sanitized (HTML + Emoji removed).');
+            }
+        }
+
+        // 🌟 对齐 RAGDiaryPlugin 的加权平均逻辑以命中缓存
+        const config = ragPlugin.ragParams?.RAGDiaryPlugin || {};
+        const mainWeights = config.mainSearchWeights || [0.7, 0.3];
+
+        const [uVec, aVec] = await Promise.all([
+            userContent ? ragPlugin.getSingleEmbeddingCached(userContent) : Promise.resolve(null),
+            aiContent ? ragPlugin.getSingleEmbeddingCached(aiContent) : Promise.resolve(null)
+        ]);
+
+        const userVector = ragPlugin._getWeightedAverageVector([uVec, aVec], mainWeights);
         if (!userVector) {
             if (context.DEBUG_MODE) console.log(`[DynamicFold] 获取用户上下文向量失败，返回基础内容 (${placeholderKey})`);
             return fallbackBlock.content;
@@ -243,6 +313,11 @@ async function replaceOtherVariables(text, model, role, context) {
         const staticPlaceholderValues = pluginManager.getAllPlaceholderValues(); // Use the getter
         if (staticPlaceholderValues && staticPlaceholderValues.size > 0) {
             for (const [placeholder, entry] of staticPlaceholderValues.entries()) {
+                // 修复上下文折叠漏洞：如果当前文本压根没有这个占位符，直接跳过，避免触发不必要的向量化和计算
+                if (!processedText.includes(placeholder)) {
+                    continue;
+                }
+
                 const placeholderRegex = new RegExp(placeholder.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'), 'g');
 
                 let valueToInject = entry;
