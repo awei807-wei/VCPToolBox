@@ -4,12 +4,17 @@
       TVS 变量文件用于存储系统自定义变量，每行一个 <code>KEY=VALUE</code> 对。
     </p>
 
-    <div class="tvs-files-editor" :class="{ 'is-sidebar-collapsed': sidebarCollapsed }">
+    <div
+      class="tvs-files-editor"
+      :class="{ 'is-sidebar-collapsed': sidebarCollapsed }"
+    >
       <!-- 左侧：文件列表（操作台风格） -->
       <aside
         class="tvs-console card"
         :class="{ 'is-collapsed': sidebarCollapsed }"
-        :aria-label="sidebarCollapsed ? '变量文件操作台（已折叠）' : '变量文件操作台'"
+        :aria-label="
+          sidebarCollapsed ? '变量文件操作台（已折叠）' : '变量文件操作台'
+        "
       >
         <template v-if="sidebarCollapsed">
           <div class="console-rail">
@@ -47,139 +52,156 @@
           </div>
         </template>
         <template v-else>
-        <div class="tvs-console__section">
-          <span class="tvs-console__label">操作台</span>
-          <div class="tvs-console__header">
-            <h3>变量文件</h3>
-            <div class="sidebar-header-meta">
-              <span class="tvs-file-count">
-                {{ filteredFiles.length }}/{{ files.length }} 个
-              </span>
+          <div class="tvs-console__section">
+            <span class="tvs-console__label">操作台</span>
+            <div class="tvs-console__header">
+              <h3>变量文件</h3>
+              <div class="sidebar-header-meta">
+                <span class="tvs-file-count">
+                  {{ filteredFiles.length }}/{{ files.length }} 个
+                </span>
+                <button
+                  type="button"
+                  class="console-rail-toggle"
+                  aria-label="折叠操作台"
+                  title="折叠操作台"
+                  @click="toggleSidebar"
+                >
+                  <span class="material-symbols-outlined"
+                    >left_panel_close</span
+                  >
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="tvs-console__section">
+            <label class="tvs-search-label" for="tvs-file-search-input"
+              >搜索筛选</label
+            >
+            <div class="tvs-search-box">
+              <input
+                id="tvs-file-search-input"
+                v-model="searchQuery"
+                type="search"
+                class="tvs-search-input"
+                placeholder="按文件名筛选..."
+              />
               <button
+                v-if="searchQuery"
                 type="button"
-                class="console-rail-toggle"
-                aria-label="折叠操作台"
-                title="折叠操作台"
-                @click="toggleSidebar"
+                class="btn-secondary btn-sm"
+                aria-label="清空筛选"
+                @click="searchQuery = ''"
               >
-                <span class="material-symbols-outlined">left_panel_close</span>
+                清空
               </button>
             </div>
           </div>
-        </div>
 
-        <div class="tvs-console__section">
-          <label class="tvs-search-label" for="tvs-file-search-input">搜索筛选</label>
-          <div class="tvs-search-box">
-            <input
-              id="tvs-file-search-input"
-              v-model="searchQuery"
-              type="search"
-              class="tvs-search-input"
-              placeholder="按文件名筛选..."
-            />
+          <div class="tvs-console__actions">
             <button
-              v-if="searchQuery"
               type="button"
               class="btn-secondary btn-sm"
-              aria-label="清空筛选"
-              @click="searchQuery = ''"
+              title="刷新"
+              :disabled="loadingFiles"
+              @click="reloadFiles"
             >
-              清空
-            </button>
-          </div>
-        </div>
-
-        <div class="tvs-console__actions">
-          <button
-            type="button"
-            class="btn-secondary btn-sm"
-            title="刷新"
-            :disabled="loadingFiles"
-            @click="reloadFiles"
-          >
-            ↻
-          </button>
-          <button
-            type="button"
-            class="btn-secondary btn-sm"
-            :disabled="isCreating"
-            @click="beginCreateFile"
-          >
-            新建
-          </button>
-        </div>
-
-        <div v-if="isCreating" class="tvs-console__section tvs-new-file">
-          <label class="tvs-search-label" for="tvs-new-file-input">新建文件</label>
-          <div class="tvs-search-box">
-            <input
-              id="tvs-new-file-input"
-              ref="newFileInputRef"
-              v-model="newFileName"
-              type="text"
-              class="tvs-search-input"
-              placeholder="文件名（自动补 .txt）"
-              @keydown.enter.prevent="confirmCreateFile"
-              @keydown.esc.prevent="cancelCreateFile"
-            />
-          </div>
-          <div class="tvs-new-file__actions">
-            <button
-              type="button"
-              class="btn-success btn-sm"
-              @click="confirmCreateFile"
-            >
-              创建
+              ↻
             </button>
             <button
               type="button"
               class="btn-secondary btn-sm"
-              @click="cancelCreateFile"
+              :disabled="isCreating"
+              @click="beginCreateFile"
             >
-              取消
+              新建
             </button>
           </div>
-          <p v-if="createError" class="tvs-new-file__error">{{ createError }}</p>
-        </div>
 
-        <div v-if="loadingFiles" class="tvs-file-loading">
-          <span class="loading-spinner loading-spinner--sm"></span>
-          <p>正在加载文件列表…</p>
-        </div>
-
-        <div v-else-if="files.length === 0" class="tvs-file-empty">
-          <span class="material-symbols-outlined">edit_note</span>
-          <h4>暂无变量文件</h4>
-          <p>点击上方「新建」创建第一个 TVS 变量文件。</p>
-        </div>
-
-        <div v-else-if="filteredFiles.length === 0" class="tvs-file-empty subtle">
-          <p>未找到匹配「{{ searchQuery }}」的文件。</p>
-        </div>
-
-        <ul v-else class="tvs-file-list">
-          <li
-            v-for="file in filteredFiles"
-            :key="file"
-            class="tvs-file-list-item"
-          >
-            <button
-              type="button"
-              :class="['tvs-file-row', { 'is-active': file === selectedFile }]"
-              @click="requestSelectFile(file)"
+          <div v-if="isCreating" class="tvs-console__section tvs-new-file">
+            <label class="tvs-search-label" for="tvs-new-file-input"
+              >新建文件</label
             >
-              <span class="material-symbols-outlined tvs-file-icon">description</span>
-              <span class="tvs-file-name">{{ file }}</span>
-              <span
-                v-if="file === selectedFile && isDirty"
-                class="tvs-file-dirty"
-                title="有未保存更改"
-                aria-label="有未保存更改"
-              >●</span>
-            </button>
-          </li>
-        </ul>
+            <div class="tvs-search-box">
+              <input
+                id="tvs-new-file-input"
+                ref="newFileInputRef"
+                v-model="newFileName"
+                type="text"
+                class="tvs-search-input"
+                placeholder="文件名（自动补 .txt）"
+                @keydown.enter.prevent="confirmCreateFile"
+                @keydown.esc.prevent="cancelCreateFile"
+              />
+            </div>
+            <div class="tvs-new-file__actions">
+              <button
+                type="button"
+                class="btn-success btn-sm"
+                @click="confirmCreateFile"
+              >
+                创建
+              </button>
+              <button
+                type="button"
+                class="btn-secondary btn-sm"
+                @click="cancelCreateFile"
+              >
+                取消
+              </button>
+            </div>
+            <p v-if="createError" class="tvs-new-file__error">
+              {{ createError }}
+            </p>
+          </div>
+
+          <div v-if="loadingFiles" class="tvs-file-loading">
+            <span class="loading-spinner loading-spinner--sm"></span>
+            <p>正在加载文件列表…</p>
+          </div>
+
+          <div v-else-if="files.length === 0" class="tvs-file-empty">
+            <span class="material-symbols-outlined">edit_note</span>
+            <h4>暂无变量文件</h4>
+            <p>点击上方「新建」创建第一个 TVS 变量文件。</p>
+          </div>
+
+          <div
+            v-else-if="filteredFiles.length === 0"
+            class="tvs-file-empty subtle"
+          >
+            <p>未找到匹配「{{ searchQuery }}」的文件。</p>
+          </div>
+
+          <ul v-else class="tvs-file-list">
+            <li
+              v-for="file in filteredFiles"
+              :key="file"
+              class="tvs-file-list-item"
+            >
+              <button
+                type="button"
+                :class="[
+                  'tvs-file-row',
+                  { 'is-active': file === selectedFile },
+                ]"
+                @click="requestSelectFile(file)"
+              >
+                <span class="material-symbols-outlined tvs-file-icon"
+                  >description</span
+                >
+                <span class="tvs-file-name">{{ file }}</span>
+                <span
+                  v-if="file === selectedFile && isDirty"
+                  class="tvs-file-dirty"
+                  title="有未保存更改"
+                  aria-label="有未保存更改"
+                  >●</span
+                >
+              </button>
+            </li>
+          </ul>
         </template>
       </aside>
 
@@ -188,7 +210,9 @@
         <div class="tvs-editor card">
           <div class="tvs-editor__toolbar">
             <div class="tvs-editor__title">
-              <span class="material-symbols-outlined tvs-editor__title-icon">edit_note</span>
+              <span class="material-symbols-outlined tvs-editor__title-icon"
+                >edit_note</span
+              >
               <div class="tvs-editor__title-main">
                 <h3>编辑内容</h3>
                 <div class="tvs-editor__meta">
@@ -224,6 +248,15 @@
                 @click="deleteFile"
               >
                 删除
+              </button>
+              <button
+                type="button"
+                class="btn-secondary btn-sm"
+                :disabled="!selectedFile"
+                @click="versionPanelVisible = true"
+              >
+                <span class="material-symbols-outlined">history</span>
+                版本历史
               </button>
               <button
                 type="button"
@@ -271,17 +304,35 @@
         </div>
       </main>
     </div>
+
+    <VersionHistoryPanel
+      v-model:visible="versionPanelVisible"
+      module="tvs"
+      :file-name="selectedFile"
+      :current-content="fileContent"
+      @load-version="onLoadVersion"
+      @refresh="onVersionRefresh"
+    />
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+} from "vue";
 import { onBeforeRouteLeave } from "vue-router";
 import { tvsApi } from "@/api";
+import { versionApi } from "@/api/version";
 import { useConsoleCollapse } from "@/composables/useConsoleCollapse";
 import { askConfirm } from "@/platform/feedback/feedbackBus";
 import { showMessage } from "@/utils";
 import { createLogger } from "@/utils/logger";
+import VersionHistoryPanel from "@/components/VersionHistoryPanel.vue";
 
 const logger = createLogger("TvsFilesEditor");
 
@@ -304,9 +355,10 @@ const statusMessage = ref("");
 const statusType = ref<"info" | "success" | "error">("info");
 let statusTimer: ReturnType<typeof setTimeout> | null = null;
 
-const { collapsed: sidebarCollapsed, toggle: toggleSidebar } = useConsoleCollapse(
-  "tvs-files"
-);
+const versionPanelVisible = ref(false);
+
+const { collapsed: sidebarCollapsed, toggle: toggleSidebar } =
+  useConsoleCollapse("tvs-files");
 
 const isDirty = computed(() => fileContent.value !== originalContent.value);
 
@@ -422,6 +474,17 @@ async function saveFile(): Promise<void> {
       loadingKey: "tvs-files.content.save",
     });
     originalContent.value = fileContent.value;
+
+    try {
+      await versionApi.createTvsVersion(
+        selectedFile.value,
+        fileContent.value,
+        "Auto-saved"
+      );
+    } catch {
+      /* 自动创建版本失败静默处理，不影响主流程 */
+    }
+
     setStatus(`文件「${selectedFile.value}」已保存`, "success");
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
@@ -458,7 +521,9 @@ async function deleteFile(): Promise<void> {
 
   const targetFile = selectedFile.value;
   const ok = await askConfirm({
-    message: `确定要删除文件「${targetFile}」吗？${isDirty.value ? " 当前有未保存更改，" : ""}此操作不可恢复。`,
+    message: `确定要删除文件「${targetFile}」吗？${
+      isDirty.value ? " 当前有未保存更改，" : ""
+    }此操作不可恢复。`,
     danger: true,
     confirmText: "删除文件",
   });
@@ -485,6 +550,19 @@ async function deleteFile(): Promise<void> {
     logger.error("Failed to delete file", error);
     setStatus(`删除失败：${msg}`, "error");
     showMessage(`删除失败：${msg}`, "error");
+  }
+}
+
+/* ── Version History ── */
+function onLoadVersion(content: string, version: number): void {
+  fileContent.value = content;
+  originalContent.value = content;
+  setStatus(`已加载历史版本 v${version}，编辑后保存可覆盖当前版本`, "info");
+}
+
+async function onVersionRefresh(): Promise<void> {
+  if (selectedFile.value) {
+    await loadFileContent(selectedFile.value);
   }
 }
 
@@ -604,9 +682,8 @@ onBeforeRouteLeave(async () => {
 .tvs-files-editor {
   --tvs-panel-viewport-gap: var(--space-4);
   --tvs-panel-height: calc(
-    var(--app-viewport-height, 100vh) -
-    var(--app-top-bar-height, 60px) -
-    var(--tvs-panel-viewport-gap) * 2
+    var(--app-viewport-height, 100vh) - var(--app-top-bar-height, 60px) -
+      var(--tvs-panel-viewport-gap) * 2
   );
   display: grid;
   grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
@@ -787,10 +864,8 @@ onBeforeRouteLeave(async () => {
   cursor: pointer;
   box-sizing: border-box;
   min-height: 52px;
-  transition:
-    border-color var(--transition-fast),
-    background var(--transition-fast),
-    transform var(--transition-fast);
+  transition: border-color var(--transition-fast),
+    background var(--transition-fast), transform var(--transition-fast);
 }
 
 .tvs-file-row:hover {
@@ -802,7 +877,8 @@ onBeforeRouteLeave(async () => {
 .tvs-file-row.is-active {
   border-color: var(--highlight-text);
   background: color-mix(in srgb, var(--highlight-text) 14%, transparent);
-  box-shadow: 0 8px 18px color-mix(in srgb, var(--highlight-text) 20%, transparent);
+  box-shadow: 0 8px 18px
+    color-mix(in srgb, var(--highlight-text) 20%, transparent);
 }
 
 .tvs-file-icon {

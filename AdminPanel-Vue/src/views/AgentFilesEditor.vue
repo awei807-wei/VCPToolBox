@@ -1,8 +1,8 @@
 <template>
   <section class="config-section active-section agent-files-page">
     <p class="description">
-      管理 Agent 的定义名称与对应的 `.txt` / `.md` 文件。你可以在这里添加、删除和修改
-      Agent 映射，并直接编辑关联的文本文件。
+      管理 Agent 的定义名称与对应的 `.txt` / `.md`
+      文件。你可以在这里添加、删除和修改 Agent 映射，并直接编辑关联的文本文件。
     </p>
 
     <DualPaneEditor
@@ -23,7 +23,9 @@
               aria-label="添加新 Agent"
               title="添加新 Agent"
             >
-              <span class="material-symbols-outlined" aria-hidden="true">add</span>
+              <span class="material-symbols-outlined" aria-hidden="true"
+                >add</span
+              >
               添加
             </button>
             <button
@@ -38,15 +40,28 @@
                 class="material-symbols-outlined"
                 :class="{ spinning: isSavingMap }"
                 aria-hidden="true"
-              >{{ isSavingMap ? "sync" : "save" }}</span>
+                >{{ isSavingMap ? "sync" : "save" }}</span
+              >
               {{ isSavingMap ? "保存中…" : mapDirty ? "保存" : "已保存" }}
             </button>
             <details class="pane-toolbar-menu">
-              <summary class="pane-toolbar-menu-trigger" aria-label="更多操作" title="更多操作">
+              <summary
+                class="pane-toolbar-menu-trigger"
+                aria-label="更多操作"
+                title="更多操作"
+              >
                 <span class="material-symbols-outlined">more_vert</span>
               </summary>
-              <div class="pane-toolbar-menu-content" role="menu" aria-label="Agent 映射更多操作">
-                <button type="button" @click="refreshAll" class="pane-toolbar-menu-item">
+              <div
+                class="pane-toolbar-menu-content"
+                role="menu"
+                aria-label="Agent 映射更多操作"
+              >
+                <button
+                  type="button"
+                  @click="refreshAll"
+                  class="pane-toolbar-menu-item"
+                >
                   <span class="material-symbols-outlined">refresh</span>
                   刷新数据
                 </button>
@@ -59,7 +74,7 @@
             :title="mapDirty ? '映射未保存' : '映射已同步'"
             :aria-label="mapDirty ? '映射未保存' : '映射已同步'"
           >
-            {{ mapDirty ? '映射未保存' : '映射已同步' }}
+            {{ mapDirty ? "映射未保存" : "映射已同步" }}
           </span>
         </div>
       </template>
@@ -74,7 +89,9 @@
             :title="entry.name || entry.file"
             @click="selectAgentFile(resolveAgentFileName(entry.file))"
           >
-            <span class="collapsed-avatar">{{ (entry.name || entry.file || 'A').slice(0, 1).toUpperCase() }}</span>
+            <span class="collapsed-avatar">{{
+              (entry.name || entry.file || "A").slice(0, 1).toUpperCase()
+            }}</span>
           </button>
           <div v-if="agentMap.length === 0" class="collapsed-empty">
             <span class="material-symbols-outlined">smart_toy</span>
@@ -122,16 +139,18 @@
                   hasInvalidAgentFilePath(entry.file)
                     ? 'error'
                     : doesFileExist(entry.file)
-                      ? 'success'
-                      : 'info',
+                    ? 'success'
+                    : 'info',
                 ]"
               >
                 {{
                   hasInvalidAgentFilePath(entry.file)
                     ? "文件名不能包含绝对路径、空目录、. 或 .."
                     : doesFileExist(entry.file)
-                      ? `将绑定已有文件：${resolveAgentFileName(entry.file)}`
-                      : `点击“创建并绑定”后会新建：${normalizeAgentFileName(entry.file)}`
+                    ? `将绑定已有文件：${resolveAgentFileName(entry.file)}`
+                    : `点击“创建并绑定”后会新建：${normalizeAgentFileName(
+                        entry.file
+                      )}`
                 }}
               </span>
             </div>
@@ -182,8 +201,20 @@
               :disabled="!fileDirty || isSavingFile"
               class="btn-success btn-sm btn-sm-touch"
             >
-              <span class="material-symbols-outlined" :class="{ spinning: isSavingFile }">{{ isSavingFile ? "sync" : "save" }}</span>
+              <span
+                class="material-symbols-outlined"
+                :class="{ spinning: isSavingFile }"
+                >{{ isSavingFile ? "sync" : "save" }}</span
+              >
               {{ isSavingFile ? "保存中…" : fileDirty ? "保存文件" : "已保存" }}
+            </button>
+            <button
+              type="button"
+              class="btn-secondary btn-sm btn-sm-touch"
+              @click="versionPanelVisible = true"
+            >
+              <span class="material-symbols-outlined">history</span>
+              版本历史
             </button>
           </div>
         </div>
@@ -227,6 +258,15 @@
     >
       {{ statusMessage }}
     </span>
+
+    <VersionHistoryPanel
+      v-model:visible="versionPanelVisible"
+      module="agent"
+      :file-name="editingFile"
+      :current-content="fileContent"
+      @load-version="onLoadVersion"
+      @refresh="onVersionRefresh"
+    />
   </section>
 </template>
 
@@ -234,7 +274,9 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { onBeforeRouteLeave } from "vue-router";
 import { agentApi } from "@/api";
+import { versionApi } from "@/api/version";
 import DualPaneEditor from "@/components/DualPaneEditor.vue";
+import VersionHistoryPanel from "@/components/VersionHistoryPanel.vue";
 import { askConfirm } from "@/platform/feedback/feedbackBus";
 import type {
   AgentFilesStatusType,
@@ -275,6 +317,7 @@ const fileStatusMessage = ref("");
 const fileStatusType = ref<AgentFilesStatusType>("info");
 const isSavingMap = ref(false);
 const isSavingFile = ref(false);
+const versionPanelVisible = ref(false);
 const initialAgentMapSnapshot = ref("[]");
 
 const agentFilesDatalistId = "agent-file-options";
@@ -572,11 +615,13 @@ function addAgentEntry(): void {
 }
 
 async function removeAgentEntry(index: number): Promise<void> {
-  if (!(await askConfirm({
-    message: "确定删除这条 Agent 映射吗？",
-    danger: true,
-    confirmText: "删除",
-  }))) {
+  if (
+    !(await askConfirm({
+      message: "确定删除这条 Agent 映射吗？",
+      danger: true,
+      confirmText: "删除",
+    }))
+  ) {
     return;
   }
 
@@ -610,9 +655,13 @@ async function createAndBindAgentFile(entry: AgentMapDraft): Promise<void> {
   const createTarget = splitAgentFilePath(normalizedFileName);
 
   try {
-    await agentApi.createAgentFile(createTarget.fileName, createTarget.folderPath, {
-      loadingKey: "agent-files.file.create",
-    });
+    await agentApi.createAgentFile(
+      createTarget.fileName,
+      createTarget.folderPath,
+      {
+        loadingKey: "agent-files.file.create",
+      }
+    );
 
     await loadAvailableFiles();
     entry.file = normalizeEntryFile(entry);
@@ -675,6 +724,16 @@ async function saveAgentFile(): Promise<void> {
 
     originalFileContent.value = fileContent.value;
 
+    try {
+      await versionApi.createAgentVersion(
+        editingFile.value,
+        fileContent.value,
+        "Auto-saved"
+      );
+    } catch {
+      /* 自动创建版本失败静默处理，不影响主流程 */
+    }
+
     fileStatusMessage.value = "文件已保存。";
     fileStatusType.value = "success";
     showMessage("文件已保存。", "success");
@@ -705,11 +764,27 @@ async function refreshAll(): Promise<void> {
   }
 }
 
+function onLoadVersion(content: string, version: number): void {
+  fileContent.value = content;
+  originalFileContent.value = content;
+  fileStatusMessage.value = `已加载历史版本 v${version}，编辑后保存可覆盖当前版本`;
+  fileStatusType.value = "info";
+}
+
+async function onVersionRefresh(): Promise<void> {
+  if (editingFile.value) {
+    await selectAgentFile(editingFile.value);
+  }
+}
+
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
     return false;
   }
-  return target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
+  return (
+    target.isContentEditable ||
+    ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)
+  );
 }
 
 function handleKeydown(event: KeyboardEvent): void {

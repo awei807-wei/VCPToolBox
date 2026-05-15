@@ -1,7 +1,8 @@
 <template>
   <section class="config-section active-section toolbox-manager-page">
     <p class="description">
-      维护 toolbox_map.json（alias→file+description），并编辑 TVStxt 下映射文件内容。
+      维护 toolbox_map.json（alias→file+description），并编辑 TVStxt
+      下映射文件内容。
     </p>
 
     <DualPaneEditor
@@ -16,7 +17,12 @@
       <template #left-actions>
         <div class="pane-toolbar pane-toolbar--left">
           <div class="pane-toolbar-main">
-            <button type="button" @click="openCreateDialog" class="btn-primary btn-sm btn-sm-touch" title="新建 Toolbox 映射">
+            <button
+              type="button"
+              @click="openCreateDialog"
+              class="btn-primary btn-sm btn-sm-touch"
+              title="新建 Toolbox 映射"
+            >
               <span class="material-symbols-outlined">add</span>
               新建
             </button>
@@ -28,14 +34,26 @@
               title="保存映射表"
             >
               <span class="material-symbols-outlined">save</span>
-              {{ mapSaving ? '保存中…' : mapDirty ? '保存' : '已保存' }}
+              {{ mapSaving ? "保存中…" : mapDirty ? "保存" : "已保存" }}
             </button>
             <details class="pane-toolbar-menu">
-              <summary class="pane-toolbar-menu-trigger" aria-label="更多操作" title="更多操作">
+              <summary
+                class="pane-toolbar-menu-trigger"
+                aria-label="更多操作"
+                title="更多操作"
+              >
                 <span class="material-symbols-outlined">more_vert</span>
               </summary>
-              <div class="pane-toolbar-menu-content" role="menu" aria-label="Toolbox 映射更多操作">
-                <button type="button" @click="refreshAll" class="pane-toolbar-menu-item">
+              <div
+                class="pane-toolbar-menu-content"
+                role="menu"
+                aria-label="Toolbox 映射更多操作"
+              >
+                <button
+                  type="button"
+                  @click="refreshAll"
+                  class="pane-toolbar-menu-item"
+                >
                   <span class="material-symbols-outlined">refresh</span>
                   刷新数据
                 </button>
@@ -48,7 +66,7 @@
             :title="mapDirty ? '映射未保存' : '映射已同步'"
             :aria-label="mapDirty ? '映射未保存' : '映射已同步'"
           >
-            {{ mapDirty ? '映射未保存' : '映射已同步' }}
+            {{ mapDirty ? "映射未保存" : "映射已同步" }}
           </span>
         </div>
       </template>
@@ -81,14 +99,23 @@
             type="text"
             placeholder="搜索别名、文件名或描述…"
             class="search-input"
+          />
+          <button
+            v-if="searchQuery"
+            @click="searchQuery = ''"
+            class="search-clear"
+            title="清除"
           >
-          <button v-if="searchQuery" @click="searchQuery = ''" class="search-clear" title="清除">
             <span class="material-symbols-outlined">close</span>
           </button>
         </div>
 
         <div class="toolbox-map-list">
-          <div v-for="entry in filteredToolboxMap" :key="entry.localId" class="toolbox-map-entry card">
+          <div
+            v-for="entry in filteredToolboxMap"
+            :key="entry.localId"
+            class="toolbox-map-entry card"
+          >
             <div class="toolbox-entry-row">
               <label>别名 (Alias):</label>
               <div class="input-validated">
@@ -96,9 +123,15 @@
                   type="text"
                   v-model="entry.alias"
                   placeholder="例如：MyToolBox（仅英文、数字、下划线）"
-                  :class="{ 'input-error': entry.alias.trim() && !isValidAlias(entry.alias.trim()) }"
+                  :class="{
+                    'input-error':
+                      entry.alias.trim() && !isValidAlias(entry.alias.trim()),
+                  }"
+                />
+                <span
+                  v-if="entry.alias.trim() && !isValidAlias(entry.alias.trim())"
+                  class="validation-hint"
                 >
-                <span v-if="entry.alias.trim() && !isValidAlias(entry.alias.trim())" class="validation-hint">
                   仅允许英文字母、数字和下划线
                 </span>
               </div>
@@ -111,9 +144,19 @@
                   v-model="entry.file"
                   placeholder="例如：MyTool.txt"
                   list="tvs-files-datalist"
-                  :class="{ 'input-error': entry.file.trim() && !isValidToolboxFileName(entry.file.trim()) }"
+                  :class="{
+                    'input-error':
+                      entry.file.trim() &&
+                      !isValidToolboxFileName(entry.file.trim()),
+                  }"
+                />
+                <span
+                  v-if="
+                    entry.file.trim() &&
+                    !isValidToolboxFileName(entry.file.trim())
+                  "
+                  class="validation-hint"
                 >
-                <span v-if="entry.file.trim() && !isValidToolboxFileName(entry.file.trim())" class="validation-hint">
                   文件名须以 .txt 或 .md 结尾，不可含非法字符
                 </span>
               </div>
@@ -125,25 +168,34 @@
                 v-model="entry.description"
                 placeholder="工具描述…"
                 maxlength="200"
-              >
+              />
             </div>
             <div class="toolbox-entry-actions">
               <button
                 @click="selectToolboxFile(entry.file)"
                 class="btn-secondary btn-sm btn-sm-touch"
-                :disabled="!entry.file.trim() || !isValidToolboxFileName(entry.file.trim())"
+                :disabled="
+                  !entry.file.trim() ||
+                  !isValidToolboxFileName(entry.file.trim())
+                "
               >
                 <span class="material-symbols-outlined">edit</span>
                 编辑
               </button>
-              <button @click="removeToolboxEntry(entry.localId)" class="btn-danger btn-sm btn-sm-touch">
+              <button
+                @click="removeToolboxEntry(entry.localId)"
+                class="btn-danger btn-sm btn-sm-touch"
+              >
                 <span class="material-symbols-outlined">delete</span>
                 删除
               </button>
             </div>
           </div>
 
-          <div v-if="filteredToolboxMap.length === 0 && toolboxMap.length > 0" class="empty-state">
+          <div
+            v-if="filteredToolboxMap.length === 0 && toolboxMap.length > 0"
+            class="empty-state"
+          >
             <span class="material-symbols-outlined">search_off</span>
             <p>没有匹配"{{ searchQuery }}"的条目</p>
           </div>
@@ -151,7 +203,9 @@
           <div v-if="toolboxMap.length === 0" class="empty-state">
             <span class="material-symbols-outlined">inventory_2</span>
             <p>暂无 Toolbox 映射</p>
-            <button @click="openCreateDialog" class="btn-primary">新建第一个 Toolbox</button>
+            <button @click="openCreateDialog" class="btn-primary">
+              新建第一个 Toolbox
+            </button>
           </div>
         </div>
       </template>
@@ -160,10 +214,19 @@
         <div v-if="editingFile" class="pane-toolbar pane-toolbar--right">
           <div class="pane-toolbar-main">
             <div class="editor-mode-toggle">
-              <button :class="['mode-btn', { active: editorMode === 'visual' }]" @click="switchEditorMode('visual')" title="可视化 Fold 块编辑">
-                <span class="material-symbols-outlined">view_agenda</span> 可视化
+              <button
+                :class="['mode-btn', { active: editorMode === 'visual' }]"
+                @click="switchEditorMode('visual')"
+                title="可视化 Fold 块编辑"
+              >
+                <span class="material-symbols-outlined">view_agenda</span>
+                可视化
               </button>
-              <button :class="['mode-btn', { active: editorMode === 'raw' }]" @click="switchEditorMode('raw')" title="原始文本编辑">
+              <button
+                :class="['mode-btn', { active: editorMode === 'raw' }]"
+                @click="switchEditorMode('raw')"
+                title="原始文本编辑"
+              >
                 <span class="material-symbols-outlined">code</span> 原始
               </button>
             </div>
@@ -174,14 +237,34 @@
               class="btn-success btn-sm btn-sm-touch"
             >
               <span class="material-symbols-outlined">save</span>
-              {{ fileSaving ? '保存中…' : fileDirty ? '保存文件' : '已保存' }}
+              {{ fileSaving ? "保存中…" : fileDirty ? "保存文件" : "已保存" }}
+            </button>
+            <button
+              type="button"
+              class="btn-secondary btn-sm btn-sm-touch"
+              @click="versionPanelVisible = true"
+            >
+              <span class="material-symbols-outlined">history</span>
+              版本历史
             </button>
             <details class="pane-toolbar-menu">
-              <summary class="pane-toolbar-menu-trigger" aria-label="文件更多操作" title="文件更多操作">
+              <summary
+                class="pane-toolbar-menu-trigger"
+                aria-label="文件更多操作"
+                title="文件更多操作"
+              >
                 <span class="material-symbols-outlined">more_vert</span>
               </summary>
-              <div class="pane-toolbar-menu-content pane-toolbar-menu-content--right" role="menu" aria-label="文件更多操作">
-                <button type="button" @click="deleteCurrentFile" class="pane-toolbar-menu-item pane-toolbar-menu-item--danger">
+              <div
+                class="pane-toolbar-menu-content pane-toolbar-menu-content--right"
+                role="menu"
+                aria-label="文件更多操作"
+              >
+                <button
+                  type="button"
+                  @click="deleteCurrentFile"
+                  class="pane-toolbar-menu-item pane-toolbar-menu-item--danger"
+                >
                   <span class="material-symbols-outlined">delete_forever</span>
                   删除文件
                 </button>
@@ -196,7 +279,7 @@
           <div class="toolbox-editor-controls">
             <span class="editing-file-display">
               <span class="material-symbols-outlined">description</span>
-              {{ editingFile || '未选择文件' }}
+              {{ editingFile || "未选择文件" }}
               <span v-if="fileDirty" class="dirty-indicator">（未保存）</span>
             </span>
           </div>
@@ -211,9 +294,11 @@
               <input
                 type="range"
                 v-model.number="simulatedThreshold"
-                min="0" max="1" step="0.05"
+                min="0"
+                max="1"
+                step="0.05"
                 class="threshold-slider"
-              >
+              />
               <span class="threshold-hint">
                 {{ visibleBlockCount }}/{{ foldBlocks.length }} 块可见
               </span>
@@ -221,13 +306,25 @@
 
             <div class="fold-blocks-visual">
               <template v-for="(block, i) in foldBlocks" :key="i">
-                <div class="fold-block-card card" :class="{ 'block-hidden': block.threshold > simulatedThreshold }">
+                <div
+                  class="fold-block-card card"
+                  :class="{
+                    'block-hidden': block.threshold > simulatedThreshold,
+                  }"
+                >
                   <div class="fold-block-header">
                     <span class="block-index">Block {{ i + 1 }}</span>
-                    <span class="block-threshold-badge" :class="thresholdClass(block.threshold)">
+                    <span
+                      class="block-threshold-badge"
+                      :class="thresholdClass(block.threshold)"
+                    >
                       {{ block.threshold.toFixed(2) }}
                     </span>
-                    <span v-if="block.threshold > simulatedThreshold" class="block-folded-badge">折叠中</span>
+                    <span
+                      v-if="block.threshold > simulatedThreshold"
+                      class="block-folded-badge"
+                      >折叠中</span
+                    >
                     <span class="flex-spacer"></span>
                     <button
                       @click="removeFoldBlock(i)"
@@ -241,12 +338,31 @@
                   <div class="fold-block-meta">
                     <div class="fold-block-field">
                       <label>阈值:</label>
-                      <input type="range" v-model.number="block.threshold" min="0" max="1" step="0.05" class="block-threshold-slider">
-                      <input type="number" v-model.number="block.threshold" min="0" max="1" step="0.05" class="block-threshold-input">
+                      <input
+                        type="range"
+                        v-model.number="block.threshold"
+                        min="0"
+                        max="1"
+                        step="0.05"
+                        class="block-threshold-slider"
+                      />
+                      <input
+                        type="number"
+                        v-model.number="block.threshold"
+                        min="0"
+                        max="1"
+                        step="0.05"
+                        class="block-threshold-input"
+                      />
                     </div>
                     <div class="fold-block-field">
                       <label>语义描述:</label>
-                      <input type="text" v-model="block.description" placeholder="用于按块独立语义匹配（为空则按工具箱整体描述匹配）" class="block-desc-input">
+                      <input
+                        type="text"
+                        v-model="block.description"
+                        placeholder="用于按块独立语义匹配（为空则按工具箱整体描述匹配）"
+                        class="block-desc-input"
+                      />
                     </div>
                   </div>
                   <textarea
@@ -258,13 +374,20 @@
                   ></textarea>
                 </div>
                 <div class="block-divider">
-                  <button @click="addFoldBlockAfter(i)" class="btn-add-block" title="在此处插入新块">
+                  <button
+                    @click="addFoldBlockAfter(i)"
+                    class="btn-add-block"
+                    title="在此处插入新块"
+                  >
                     <span class="material-symbols-outlined">add_circle</span>
                   </button>
                 </div>
               </template>
 
-              <button @click="addFoldBlockAtEnd" class="btn-secondary btn-sm add-block-final">
+              <button
+                @click="addFoldBlockAtEnd"
+                class="btn-secondary btn-sm add-block-final"
+              >
                 <span class="material-symbols-outlined">add</span>
                 新增 Block
               </button>
@@ -287,7 +410,6 @@
             <span class="material-symbols-outlined">edit_note</span>
             <p>从左侧选择一个 Toolbox 并点击"编辑"</p>
           </div>
-
         </div>
       </template>
     </DualPaneEditor>
@@ -298,138 +420,171 @@
     </datalist>
 
     <!-- Unified create dialog -->
-    <BaseModal
-      v-model="showCreateDialog"
-      aria-label="新建 Toolbox"
-    >
+    <BaseModal v-model="showCreateDialog" aria-label="新建 Toolbox">
       <template #default="{ overlayAttrs, panelAttrs, panelRef }">
         <div v-bind="overlayAttrs" class="dialog-overlay">
           <div :ref="panelRef" v-bind="panelAttrs" class="dialog-card card">
-      <h4>新建 Toolbox</h4>
-      <div class="toolbox-entry-row">
-        <label>别名 (Alias):</label>
-        <div class="input-validated">
-          <input
-            ref="createAliasRef"
-            v-model="newAlias"
-            placeholder="例如：VCPMyToolBox"
-            :class="{ 'input-error': newAlias.trim() && !isValidAlias(newAlias.trim()) }"
-            @keydown.esc="showCreateDialog = false"
-          >
-          <span v-if="newAlias.trim() && !isValidAlias(newAlias.trim())" class="validation-hint">
-            仅允许英文字母、数字和下划线
-          </span>
-        </div>
-      </div>
-      <div class="toolbox-entry-row">
-        <label>文件名:</label>
-        <div class="input-validated">
-          <input
-            v-model="newFile"
-            placeholder="例如：MyTool.txt（无后缀自动加 .txt）"
-            list="tvs-files-datalist"
-            @keydown.esc="showCreateDialog = false"
-          >
-          <span v-if="newFile.trim() && !isValidFileName(newFile.trim())" class="validation-hint">
-            文件名包含非法字符
-          </span>
-          <span v-else-if="newFileExists" class="file-hint exists">
-            <span class="material-symbols-outlined">link</span> 文件已存在，将直接关联
-          </span>
-          <span v-else-if="newFile.trim() && isValidFileName(newFile.trim())" class="file-hint create">
-            <span class="material-symbols-outlined">add_circle_outline</span> 文件不存在，将自动创建
-          </span>
-        </div>
-      </div>
-      <div class="toolbox-entry-row">
-        <label>描述:</label>
-        <input
-          v-model="newDesc"
-          placeholder="工具箱描述…"
-          maxlength="200"
-          @keydown.esc="showCreateDialog = false"
-        >
-      </div>
-      <div class="dialog-actions">
-        <button @click="showCreateDialog = false" class="btn-secondary btn-sm">取消</button>
-        <button
-          @click="confirmCreateToolbox"
-          class="btn-primary btn-sm"
-          :disabled="!canCreate"
-        >
-          创建
-        </button>
-      </div>
+            <h4>新建 Toolbox</h4>
+            <div class="toolbox-entry-row">
+              <label>别名 (Alias):</label>
+              <div class="input-validated">
+                <input
+                  ref="createAliasRef"
+                  v-model="newAlias"
+                  placeholder="例如：VCPMyToolBox"
+                  :class="{
+                    'input-error':
+                      newAlias.trim() && !isValidAlias(newAlias.trim()),
+                  }"
+                  @keydown.esc="showCreateDialog = false"
+                />
+                <span
+                  v-if="newAlias.trim() && !isValidAlias(newAlias.trim())"
+                  class="validation-hint"
+                >
+                  仅允许英文字母、数字和下划线
+                </span>
+              </div>
+            </div>
+            <div class="toolbox-entry-row">
+              <label>文件名:</label>
+              <div class="input-validated">
+                <input
+                  v-model="newFile"
+                  placeholder="例如：MyTool.txt（无后缀自动加 .txt）"
+                  list="tvs-files-datalist"
+                  @keydown.esc="showCreateDialog = false"
+                />
+                <span
+                  v-if="newFile.trim() && !isValidFileName(newFile.trim())"
+                  class="validation-hint"
+                >
+                  文件名包含非法字符
+                </span>
+                <span v-else-if="newFileExists" class="file-hint exists">
+                  <span class="material-symbols-outlined">link</span>
+                  文件已存在，将直接关联
+                </span>
+                <span
+                  v-else-if="newFile.trim() && isValidFileName(newFile.trim())"
+                  class="file-hint create"
+                >
+                  <span class="material-symbols-outlined"
+                    >add_circle_outline</span
+                  >
+                  文件不存在，将自动创建
+                </span>
+              </div>
+            </div>
+            <div class="toolbox-entry-row">
+              <label>描述:</label>
+              <input
+                v-model="newDesc"
+                placeholder="工具箱描述…"
+                maxlength="200"
+                @keydown.esc="showCreateDialog = false"
+              />
+            </div>
+            <div class="dialog-actions">
+              <button
+                @click="showCreateDialog = false"
+                class="btn-secondary btn-sm"
+              >
+                取消
+              </button>
+              <button
+                @click="confirmCreateToolbox"
+                class="btn-primary btn-sm"
+                :disabled="!canCreate"
+              >
+                创建
+              </button>
+            </div>
           </div>
         </div>
       </template>
     </BaseModal>
+
+    <VersionHistoryPanel
+      v-model:visible="versionPanelVisible"
+      module="toolbox"
+      :file-name="editingFile"
+      :current-content="fileContent"
+      @load-version="onLoadVersion"
+      @refresh="onVersionRefresh"
+    />
   </section>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { onBeforeRouteLeave } from 'vue-router'
-import { toolboxApi } from '@/api'
-import { askConfirm } from '@/platform/feedback/feedbackBus'
-import { showMessage } from '@/utils'
-import DualPaneEditor from '@/components/DualPaneEditor.vue'
-import BaseModal from '@/components/ui/BaseModal.vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from "vue";
+import { onBeforeRouteLeave } from "vue-router";
+import { toolboxApi } from "@/api";
+import { versionApi } from "@/api/version";
+import { askConfirm } from "@/platform/feedback/feedbackBus";
+import { showMessage } from "@/utils";
+import DualPaneEditor from "@/components/DualPaneEditor.vue";
+import BaseModal from "@/components/ui/BaseModal.vue";
+import VersionHistoryPanel from "@/components/VersionHistoryPanel.vue";
 
 /* ── Types ── */
 interface ToolboxEntry {
-  localId: string
-  alias: string
-  file: string
-  description: string
+  localId: string;
+  alias: string;
+  file: string;
+  description: string;
 }
 
 interface FoldBlock {
-  threshold: number
-  description: string
-  content: string
+  threshold: number;
+  description: string;
+  content: string;
 }
 
 /* ── Constants ── */
-const ALIAS_REGEX = /^[A-Za-z0-9_]+$/
-const FOLD_REGEX = /^\[===vcp_fold:\s*([0-9.]+)(?:\s*::desc:\s*(.*?)\s*)?===\]\s*$/
+const ALIAS_REGEX = /^[A-Za-z0-9_]+$/;
+const FOLD_REGEX =
+  /^\[===vcp_fold:\s*([0-9.]+)(?:\s*::desc:\s*(.*?)\s*)?===\]\s*$/;
 
 /* ── State: Map ── */
-const toolboxMap = ref<ToolboxEntry[]>([])
-const searchQuery = ref('')
-const mapSaving = ref(false)
-const initialMapSnapshot = ref('[]')
+const toolboxMap = ref<ToolboxEntry[]>([]);
+const searchQuery = ref("");
+const mapSaving = ref(false);
+const initialMapSnapshot = ref("[]");
 
 /* ── State: Files ── */
-const tvsFiles = ref<string[]>([])
-const editingFile = ref('')
-const fileContent = ref('')
-const originalFileContent = ref('')
-const originalFoldSerialized = ref('')
-const fileSaving = ref(false)
-const fileContentCache = new Map<string, string>()
+const tvsFiles = ref<string[]>([]);
+const editingFile = ref("");
+const fileContent = ref("");
+const originalFileContent = ref("");
+const originalFoldSerialized = ref("");
+const fileSaving = ref(false);
+const fileContentCache = new Map<string, string>();
+const versionPanelVisible = ref(false);
 
 /* ── State: Editor ── */
-const editorMode = ref<'raw' | 'visual'>('visual')
-const foldBlocks = ref<FoldBlock[]>([])
-const simulatedThreshold = ref(1.0)
+const editorMode = ref<"raw" | "visual">("visual");
+const foldBlocks = ref<FoldBlock[]>([]);
+const simulatedThreshold = ref(1.0);
 /* ── State: Create Dialog ── */
-const showCreateDialog = ref(false)
-const newAlias = ref('')
-const newFile = ref('')
-const newDesc = ref('')
-const createAliasRef = ref<HTMLInputElement | null>(null)
+const showCreateDialog = ref(false);
+const newAlias = ref("");
+const newFile = ref("");
+const newDesc = ref("");
+const createAliasRef = ref<HTMLInputElement | null>(null);
 
 /* ── Computed ── */
 const fileDirty = computed(() => {
-  if (!editingFile.value) return false
-  if (editorMode.value === 'visual') {
+  if (!editingFile.value) return false;
+  if (editorMode.value === "visual") {
     // 与 originalFoldSerialized 对比，避免 parseFoldBlocks + serializeFoldBlocks
     // 不是严格恒等带来的假「未保存」提示（初次加载时尤其常见）
-    return serializeFoldBlocks(foldBlocks.value) !== originalFoldSerialized.value
+    return (
+      serializeFoldBlocks(foldBlocks.value) !== originalFoldSerialized.value
+    );
   }
-  return fileContent.value !== originalFileContent.value
-})
+  return fileContent.value !== originalFileContent.value;
+});
 
 function serializeToolboxMap(entries: ToolboxEntry[]): string {
   return JSON.stringify(
@@ -438,432 +593,543 @@ function serializeToolboxMap(entries: ToolboxEntry[]): string {
       file: entry.file.trim(),
       description: entry.description.trim(),
     }))
-  )
+  );
 }
 
-const mapDirty = computed(() => serializeToolboxMap(toolboxMap.value) !== initialMapSnapshot.value)
-const hasPendingChanges = computed(() => mapDirty.value || fileDirty.value)
+const mapDirty = computed(
+  () => serializeToolboxMap(toolboxMap.value) !== initialMapSnapshot.value
+);
+const hasPendingChanges = computed(() => mapDirty.value || fileDirty.value);
 
 const filteredToolboxMap = computed(() => {
-  const q = searchQuery.value.toLowerCase().trim()
-  if (!q) return toolboxMap.value
-  return toolboxMap.value.filter(e =>
-    e.alias.toLowerCase().includes(q) ||
-    e.file.toLowerCase().includes(q) ||
-    e.description.toLowerCase().includes(q)
-  )
-})
+  const q = searchQuery.value.toLowerCase().trim();
+  if (!q) return toolboxMap.value;
+  return toolboxMap.value.filter(
+    (e) =>
+      e.alias.toLowerCase().includes(q) ||
+      e.file.toLowerCase().includes(q) ||
+      e.description.toLowerCase().includes(q)
+  );
+});
 
-const visibleBlockCount = computed(() =>
-  foldBlocks.value.filter(b => b.threshold <= simulatedThreshold.value).length
-)
+const visibleBlockCount = computed(
+  () =>
+    foldBlocks.value.filter((b) => b.threshold <= simulatedThreshold.value)
+      .length
+);
 
 const newFileExists = computed(() => {
-  let name = newFile.value.trim()
-  if (!name) return false
-  if (!isValidToolboxFileName(name)) name = `${name}.txt`
-  return tvsFiles.value.includes(name)
-})
+  let name = newFile.value.trim();
+  if (!name) return false;
+  if (!isValidToolboxFileName(name)) name = `${name}.txt`;
+  return tvsFiles.value.includes(name);
+});
 
 const canCreate = computed(() => {
-  const alias = newAlias.value.trim()
-  const file = newFile.value.trim()
-  return alias && isValidAlias(alias) && file && isValidFileName(file)
-})
+  const alias = newAlias.value.trim();
+  const file = newFile.value.trim();
+  return alias && isValidAlias(alias) && file && isValidFileName(file);
+});
 
 /* ── Helpers ── */
 function generateLocalId(): string {
-  return typeof crypto !== 'undefined' && crypto.randomUUID
+  return typeof crypto !== "undefined" && crypto.randomUUID
     ? crypto.randomUUID()
-    : `tb-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+    : `tb-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-function createToolboxEntry(data: Partial<Omit<ToolboxEntry, 'localId'>> = {}): ToolboxEntry {
-  return { localId: generateLocalId(), alias: data.alias ?? '', file: data.file ?? '', description: data.description ?? '' }
+function createToolboxEntry(
+  data: Partial<Omit<ToolboxEntry, "localId">> = {}
+): ToolboxEntry {
+  return {
+    localId: generateLocalId(),
+    alias: data.alias ?? "",
+    file: data.file ?? "",
+    description: data.description ?? "",
+  };
 }
 
 function getErrorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err)
+  return err instanceof Error ? err.message : String(err);
 }
 
 function isValidAlias(alias: string): boolean {
-  return ALIAS_REGEX.test(alias)
+  return ALIAS_REGEX.test(alias);
 }
 
 function isValidFileName(name: string): boolean {
-  if (!name) return false
-  return !/[\\/:*?"<>|]/.test(name) && !name.includes('..')
+  if (!name) return false;
+  return !/[\\/:*?"<>|]/.test(name) && !name.includes("..");
 }
 
 function isValidToolboxFileName(name: string): boolean {
-  if (!isValidFileName(name)) return false
-  const lower = name.toLowerCase()
-  return lower.endsWith('.txt') || lower.endsWith('.md')
+  if (!isValidFileName(name)) return false;
+  const lower = name.toLowerCase();
+  return lower.endsWith(".txt") || lower.endsWith(".md");
 }
 
 /* ── Fold Block Parsing & Serialization ── */
 function parseFoldBlocks(content: string): FoldBlock[] {
-  const blocks: FoldBlock[] = []
-  let threshold = 0.0
-  let desc = ''
-  let lines: string[] = []
-  let opened = false
+  const blocks: FoldBlock[] = [];
+  let threshold = 0.0;
+  let desc = "";
+  let lines: string[] = [];
+  let opened = false;
 
-  for (const line of String(content || '').split('\n')) {
-    const m = line.match(FOLD_REGEX)
+  for (const line of String(content || "").split("\n")) {
+    const m = line.match(FOLD_REGEX);
     if (m) {
       if (opened || lines.length > 0) {
-        blocks.push({ threshold, description: desc, content: lines.join('\n').trim() })
+        blocks.push({
+          threshold,
+          description: desc,
+          content: lines.join("\n").trim(),
+        });
       }
-      threshold = parseFloat(m[1])
-      if (Number.isNaN(threshold)) threshold = 0.0
-      desc = typeof m[2] === 'string' ? m[2].trim() : ''
-      lines = []
-      opened = true
+      threshold = parseFloat(m[1]);
+      if (Number.isNaN(threshold)) threshold = 0.0;
+      desc = typeof m[2] === "string" ? m[2].trim() : "";
+      lines = [];
+      opened = true;
     } else {
-      lines.push(line)
+      lines.push(line);
     }
   }
 
   if (opened || lines.length > 0) {
-    blocks.push({ threshold, description: desc, content: lines.join('\n').trim() })
+    blocks.push({
+      threshold,
+      description: desc,
+      content: lines.join("\n").trim(),
+    });
   }
 
-  return blocks.length > 0 ? blocks : [{ threshold: 0.0, description: '', content: '' }]
+  return blocks.length > 0
+    ? blocks
+    : [{ threshold: 0.0, description: "", content: "" }];
 }
 
 function serializeFoldBlocks(blocks: FoldBlock[]): string {
-  return blocks.map((b, i) => {
-    const needsMarker = i > 0 || b.threshold > 0 || b.description
-    if (!needsMarker) return b.content
-    const descPart = b.description ? `::desc:${b.description}` : ''
-    const marker = `[===vcp_fold:${b.threshold}${descPart}===]`
-    return b.content ? `${marker}\n\n${b.content}` : marker
-  }).join('\n\n')
+  return blocks
+    .map((b, i) => {
+      const needsMarker = i > 0 || b.threshold > 0 || b.description;
+      if (!needsMarker) return b.content;
+      const descPart = b.description ? `::desc:${b.description}` : "";
+      const marker = `[===vcp_fold:${b.threshold}${descPart}===]`;
+      return b.content ? `${marker}\n\n${b.content}` : marker;
+    })
+    .join("\n\n");
 }
 
 function thresholdClass(t: number): string {
-  if (t <= 0.3) return 'threshold-low'
-  if (t <= 0.6) return 'threshold-mid'
-  return 'threshold-high'
+  if (t <= 0.3) return "threshold-low";
+  if (t <= 0.6) return "threshold-mid";
+  return "threshold-high";
 }
 
 /* ── Data Loading ── */
 async function loadToolboxMap() {
   try {
-    const data = await toolboxApi.getToolboxMap({ showLoader: false, loadingKey: 'toolbox.map.load' })
+    const data = await toolboxApi.getToolboxMap({
+      showLoader: false,
+      loadingKey: "toolbox.map.load",
+    });
     toolboxMap.value = Object.entries(data || {}).map(([alias, value]) =>
-      createToolboxEntry({ alias, file: value?.file || '', description: value?.description || '' })
-    )
-    initialMapSnapshot.value = serializeToolboxMap(toolboxMap.value)
+      createToolboxEntry({
+        alias,
+        file: value?.file || "",
+        description: value?.description || "",
+      })
+    );
+    initialMapSnapshot.value = serializeToolboxMap(toolboxMap.value);
   } catch (error) {
-    console.error('Failed to load toolbox map:', error)
-    toolboxMap.value = []
-    initialMapSnapshot.value = serializeToolboxMap(toolboxMap.value)
+    console.error("Failed to load toolbox map:", error);
+    toolboxMap.value = [];
+    initialMapSnapshot.value = serializeToolboxMap(toolboxMap.value);
   }
 }
 
 async function loadTvsFiles() {
   try {
-    const result = await toolboxApi.listToolboxFiles({ showLoader: false, loadingKey: 'toolbox.files.list' })
-    tvsFiles.value = result.files || []
+    const result = await toolboxApi.listToolboxFiles({
+      showLoader: false,
+      loadingKey: "toolbox.files.list",
+    });
+    tvsFiles.value = result.files || [];
   } catch {
-    tvsFiles.value = []
+    tvsFiles.value = [];
   }
 }
 
 async function refreshAll() {
   if (hasPendingChanges.value) {
     const shouldContinue = await askConfirm({
-      message: '存在未保存改动，刷新会覆盖当前编辑内容，是否继续？',
+      message: "存在未保存改动，刷新会覆盖当前编辑内容，是否继续？",
       danger: true,
-      confirmText: '继续刷新',
-    })
+      confirmText: "继续刷新",
+    });
     if (!shouldContinue) {
-      return
+      return;
     }
   }
 
-  fileContentCache.clear()
-  await Promise.all([loadToolboxMap(), loadTvsFiles()])
+  fileContentCache.clear();
+  await Promise.all([loadToolboxMap(), loadTvsFiles()]);
   if (editingFile.value) {
     try {
-      const content = await toolboxApi.getToolboxFile(editingFile.value, { showLoader: false, loadingKey: 'toolbox.file.load' })
-      fileContent.value = content
-      originalFileContent.value = content
-      fileContentCache.set(editingFile.value, content)
-      foldBlocks.value = parseFoldBlocks(content)
-      originalFoldSerialized.value = serializeFoldBlocks(foldBlocks.value)
-    } catch { /* file may have been deleted */ }
+      const content = await toolboxApi.getToolboxFile(editingFile.value, {
+        showLoader: false,
+        loadingKey: "toolbox.file.load",
+      });
+      fileContent.value = content;
+      originalFileContent.value = content;
+      fileContentCache.set(editingFile.value, content);
+      foldBlocks.value = parseFoldBlocks(content);
+      originalFoldSerialized.value = serializeFoldBlocks(foldBlocks.value);
+    } catch {
+      /* file may have been deleted */
+    }
   }
-  showMessage('已刷新', 'success')
+  showMessage("已刷新", "success");
 }
 
 /* ── File Editor ── */
 async function openFileInEditor(fileName: string, isNewlyCreated = false) {
-  editingFile.value = fileName
+  editingFile.value = fileName;
 
   if (isNewlyCreated) {
-    fileContent.value = ''
-    originalFileContent.value = ''
-    fileContentCache.set(fileName, '')
+    fileContent.value = "";
+    originalFileContent.value = "";
+    fileContentCache.set(fileName, "");
   } else {
     try {
       const content = fileContentCache.has(fileName)
         ? fileContentCache.get(fileName)!
-        : await toolboxApi.getToolboxFile(fileName, { showLoader: false, loadingKey: 'toolbox.file.load' })
-      fileContent.value = content
-      originalFileContent.value = content
-      fileContentCache.set(fileName, content)
+        : await toolboxApi.getToolboxFile(fileName, {
+            showLoader: false,
+            loadingKey: "toolbox.file.load",
+          });
+      fileContent.value = content;
+      originalFileContent.value = content;
+      fileContentCache.set(fileName, content);
     } catch {
-      fileContent.value = ''
-      originalFileContent.value = ''
+      fileContent.value = "";
+      originalFileContent.value = "";
     }
   }
 
-  foldBlocks.value = parseFoldBlocks(fileContent.value)
-  originalFoldSerialized.value = serializeFoldBlocks(foldBlocks.value)
+  foldBlocks.value = parseFoldBlocks(fileContent.value);
+  originalFoldSerialized.value = serializeFoldBlocks(foldBlocks.value);
 }
 
 async function selectToolboxFile(fileName: string) {
-  if (!fileName) return
-  if (fileDirty.value && !(await askConfirm('当前文件有未保存的修改，确定放弃并切换吗？'))) return
-  await openFileInEditor(fileName)
+  if (!fileName) return;
+  if (
+    fileDirty.value &&
+    !(await askConfirm("当前文件有未保存的修改，确定放弃并切换吗？"))
+  )
+    return;
+  await openFileInEditor(fileName);
 }
 
 async function saveToolboxFile() {
-  if (!editingFile.value || fileSaving.value) return
-  if (editorMode.value === 'visual') fileContent.value = serializeFoldBlocks(foldBlocks.value)
+  if (!editingFile.value || fileSaving.value) return;
+  if (editorMode.value === "visual")
+    fileContent.value = serializeFoldBlocks(foldBlocks.value);
 
-  fileSaving.value = true
+  fileSaving.value = true;
   try {
-    await toolboxApi.saveToolboxFile(editingFile.value, fileContent.value, { loadingKey: 'toolbox.file.save' })
-    originalFileContent.value = fileContent.value
-    originalFoldSerialized.value = editorMode.value === 'visual'
-      ? fileContent.value
-      : serializeFoldBlocks(parseFoldBlocks(fileContent.value))
-    fileContentCache.set(editingFile.value, fileContent.value)
-    showMessage('文件已保存！', 'success')
+    await toolboxApi.saveToolboxFile(editingFile.value, fileContent.value, {
+      loadingKey: "toolbox.file.save",
+    });
+    originalFileContent.value = fileContent.value;
+    originalFoldSerialized.value =
+      editorMode.value === "visual"
+        ? fileContent.value
+        : serializeFoldBlocks(parseFoldBlocks(fileContent.value));
+    fileContentCache.set(editingFile.value, fileContent.value);
+
+    try {
+      await versionApi.createToolboxVersion(
+        editingFile.value,
+        fileContent.value,
+        "Auto-saved"
+      );
+    } catch {
+      /* 自动创建版本失败静默处理，不影响主流程 */
+    }
+
+    showMessage("文件已保存！", "success");
   } catch (error) {
-    showMessage(`保存失败：${getErrorMessage(error)}`, 'error')
+    showMessage(`保存失败：${getErrorMessage(error)}`, "error");
   } finally {
-    fileSaving.value = false
+    fileSaving.value = false;
   }
 }
 
 async function deleteCurrentFile() {
-  if (!editingFile.value) return
-  if (!(await askConfirm({
-    message: `确定要永久删除文件"${editingFile.value}"吗？此操作不可恢复！`,
-    danger: true,
-    confirmText: '删除文件',
-  }))) return
+  if (!editingFile.value) return;
+  if (
+    !(await askConfirm({
+      message: `确定要永久删除文件"${editingFile.value}"吗？此操作不可恢复！`,
+      danger: true,
+      confirmText: "删除文件",
+    }))
+  )
+    return;
 
   try {
-    await toolboxApi.deleteToolboxFile(editingFile.value, { loadingKey: 'toolbox.file.delete' })
-    const deleted = editingFile.value
-    fileContentCache.delete(deleted)
-    editingFile.value = ''
-    fileContent.value = ''
-    originalFileContent.value = ''
-    originalFoldSerialized.value = ''
-    foldBlocks.value = []
+    await toolboxApi.deleteToolboxFile(editingFile.value, {
+      loadingKey: "toolbox.file.delete",
+    });
+    const deleted = editingFile.value;
+    fileContentCache.delete(deleted);
+    editingFile.value = "";
+    fileContent.value = "";
+    originalFileContent.value = "";
+    originalFoldSerialized.value = "";
+    foldBlocks.value = [];
 
-    const idx = tvsFiles.value.indexOf(deleted)
-    if (idx !== -1) tvsFiles.value.splice(idx, 1)
+    const idx = tvsFiles.value.indexOf(deleted);
+    if (idx !== -1) tvsFiles.value.splice(idx, 1);
 
-    showMessage(`文件 ${deleted} 已删除`, 'success')
+    showMessage(`文件 ${deleted} 已删除`, "success");
   } catch (error) {
-    showMessage(`删除文件失败：${getErrorMessage(error)}`, 'error')
+    showMessage(`删除文件失败：${getErrorMessage(error)}`, "error");
+  }
+}
+
+/* ── Version History ── */
+function onLoadVersion(content: string, version: number): void {
+  fileContent.value = content;
+  originalFileContent.value = content;
+  fileContentCache.set(editingFile.value, content);
+  foldBlocks.value = parseFoldBlocks(content);
+  originalFoldSerialized.value = serializeFoldBlocks(foldBlocks.value);
+  showMessage(
+    `已加载历史版本 v${version}，编辑后保存可覆盖当前版本`,
+    "success"
+  );
+}
+
+async function onVersionRefresh(): Promise<void> {
+  if (editingFile.value) {
+    await openFileInEditor(editingFile.value);
   }
 }
 
 /* ── Editor Mode ── */
-function switchEditorMode(mode: 'raw' | 'visual') {
-  if (mode === editorMode.value) return
-  if (mode === 'visual') {
-    foldBlocks.value = parseFoldBlocks(fileContent.value)
+function switchEditorMode(mode: "raw" | "visual") {
+  if (mode === editorMode.value) return;
+  if (mode === "visual") {
+    foldBlocks.value = parseFoldBlocks(fileContent.value);
   } else {
-    fileContent.value = serializeFoldBlocks(foldBlocks.value)
+    fileContent.value = serializeFoldBlocks(foldBlocks.value);
   }
-  editorMode.value = mode
+  editorMode.value = mode;
 }
 
 /* ── Fold Block Ops ── */
 function addFoldBlockAfter(index: number) {
-  foldBlocks.value.splice(index + 1, 0, { threshold: 0.5, description: '', content: '' })
+  foldBlocks.value.splice(index + 1, 0, {
+    threshold: 0.5,
+    description: "",
+    content: "",
+  });
 }
 
 function addFoldBlockAtEnd() {
-  foldBlocks.value.push({ threshold: 0.5, description: '', content: '' })
+  foldBlocks.value.push({ threshold: 0.5, description: "", content: "" });
 }
 
 function removeFoldBlock(index: number) {
-  if (foldBlocks.value.length <= 1) return
-  foldBlocks.value.splice(index, 1)
+  if (foldBlocks.value.length <= 1) return;
+  foldBlocks.value.splice(index, 1);
 }
 
 /* ── Map CRUD ── */
 async function removeToolboxEntry(localId: string) {
-  if (!(await askConfirm({
-    message: '确定要删除这个 Toolbox 映射吗？',
-    danger: true,
-    confirmText: '删除',
-  }))) return
-  const idx = toolboxMap.value.findIndex(e => e.localId === localId)
-  if (idx !== -1) toolboxMap.value.splice(idx, 1)
-  showMessage('已删除映射条目，请点击"保存"以生效', 'info')
+  if (
+    !(await askConfirm({
+      message: "确定要删除这个 Toolbox 映射吗？",
+      danger: true,
+      confirmText: "删除",
+    }))
+  )
+    return;
+  const idx = toolboxMap.value.findIndex((e) => e.localId === localId);
+  if (idx !== -1) toolboxMap.value.splice(idx, 1);
+  showMessage('已删除映射条目，请点击"保存"以生效', "info");
 }
 
 async function saveToolboxMap() {
-  if (mapSaving.value) return
-  mapSaving.value = true
+  if (mapSaving.value) return;
+  mapSaving.value = true;
   try {
-    const emptyCount = toolboxMap.value.filter(e => !e.alias.trim()).length
-    if (emptyCount > 0 && !(await askConfirm(`有 ${emptyCount} 个条目别名为空，保存时将被忽略。继续保存吗？`))) return
+    const emptyCount = toolboxMap.value.filter((e) => !e.alias.trim()).length;
+    if (
+      emptyCount > 0 &&
+      !(await askConfirm(
+        `有 ${emptyCount} 个条目别名为空，保存时将被忽略。继续保存吗？`
+      ))
+    )
+      return;
 
     const invalidAliases = toolboxMap.value
-      .filter(e => e.alias.trim() && !isValidAlias(e.alias.trim()))
-      .map(e => e.alias)
+      .filter((e) => e.alias.trim() && !isValidAlias(e.alias.trim()))
+      .map((e) => e.alias);
     if (invalidAliases.length > 0) {
-      showMessage(`以下别名格式无效（仅允许英文、数字、下划线）：${invalidAliases.join(', ')}`, 'error')
-      return
+      showMessage(
+        `以下别名格式无效（仅允许英文、数字、下划线）：${invalidAliases.join(
+          ", "
+        )}`,
+        "error"
+      );
+      return;
     }
 
-    const seen = new Set<string>()
-    const dupes: string[] = []
+    const seen = new Set<string>();
+    const dupes: string[] = [];
     for (const e of toolboxMap.value) {
-      const a = e.alias.trim()
-      if (!a) continue
-      if (seen.has(a)) dupes.push(a)
-      seen.add(a)
+      const a = e.alias.trim();
+      if (!a) continue;
+      if (seen.has(a)) dupes.push(a);
+      seen.add(a);
     }
     if (dupes.length > 0) {
-      showMessage(`存在重复别名：${dupes.join(', ')}`, 'error')
-      return
+      showMessage(`存在重复别名：${dupes.join(", ")}`, "error");
+      return;
     }
 
-    const payload = toolboxMap.value.reduce<Record<string, { file: string; description: string }>>((acc, e) => {
-      const a = e.alias.trim()
-      if (!a) return acc
-      acc[a] = { file: e.file.trim(), description: e.description || '' }
-      return acc
-    }, {})
+    const payload = toolboxMap.value.reduce<
+      Record<string, { file: string; description: string }>
+    >((acc, e) => {
+      const a = e.alias.trim();
+      if (!a) return acc;
+      acc[a] = { file: e.file.trim(), description: e.description || "" };
+      return acc;
+    }, {});
 
-    await toolboxApi.saveToolboxMap(payload, { loadingKey: 'toolbox.map.save' })
-    initialMapSnapshot.value = serializeToolboxMap(toolboxMap.value)
-    showMessage('Toolbox 映射表已保存！', 'success')
+    await toolboxApi.saveToolboxMap(payload, {
+      loadingKey: "toolbox.map.save",
+    });
+    initialMapSnapshot.value = serializeToolboxMap(toolboxMap.value);
+    showMessage("Toolbox 映射表已保存！", "success");
   } catch (error) {
-    showMessage(`保存失败：${getErrorMessage(error)}`, 'error')
+    showMessage(`保存失败：${getErrorMessage(error)}`, "error");
   } finally {
-    mapSaving.value = false
+    mapSaving.value = false;
   }
 }
 
 /* ── Create Dialog ── */
 function openCreateDialog() {
-  newAlias.value = ''
-  newFile.value = ''
-  newDesc.value = ''
-  showCreateDialog.value = true
-  nextTick(() => createAliasRef.value?.focus())
+  newAlias.value = "";
+  newFile.value = "";
+  newDesc.value = "";
+  showCreateDialog.value = true;
+  nextTick(() => createAliasRef.value?.focus());
 }
 
 async function confirmCreateToolbox() {
-  const alias = newAlias.value.trim()
-  let fileName = newFile.value.trim()
-  const desc = newDesc.value.trim()
+  const alias = newAlias.value.trim();
+  let fileName = newFile.value.trim();
+  const desc = newDesc.value.trim();
 
   if (!alias || !isValidAlias(alias)) {
-    showMessage('别名仅允许英文字母、数字和下划线', 'error')
-    return
+    showMessage("别名仅允许英文字母、数字和下划线", "error");
+    return;
   }
   if (!fileName || !isValidFileName(fileName)) {
-    showMessage('请输入有效的文件名', 'error')
-    return
+    showMessage("请输入有效的文件名", "error");
+    return;
   }
-  if (!isValidToolboxFileName(fileName)) fileName = `${fileName}.txt`
+  if (!isValidToolboxFileName(fileName)) fileName = `${fileName}.txt`;
 
-  if (toolboxMap.value.some(e => e.alias.trim() === alias)) {
-    showMessage(`别名"${alias}"已存在`, 'error')
-    return
+  if (toolboxMap.value.some((e) => e.alias.trim() === alias)) {
+    showMessage(`别名"${alias}"已存在`, "error");
+    return;
   }
 
   // Create file if it doesn't exist
-  const fileExists = tvsFiles.value.includes(fileName)
+  const fileExists = tvsFiles.value.includes(fileName);
   if (!fileExists) {
     try {
-      await toolboxApi.createToolboxFile(fileName, undefined, { loadingKey: 'toolbox.file.create' })
-      tvsFiles.value.push(fileName)
-      tvsFiles.value.sort()
+      await toolboxApi.createToolboxFile(fileName, undefined, {
+        loadingKey: "toolbox.file.create",
+      });
+      tvsFiles.value.push(fileName);
+      tvsFiles.value.sort();
     } catch (error: unknown) {
-      const status = (error as { status?: number })?.status
+      const status = (error as { status?: number })?.status;
       if (status !== 409) {
-        showMessage(`创建文件失败：${getErrorMessage(error)}`, 'error')
-        return
+        showMessage(`创建文件失败：${getErrorMessage(error)}`, "error");
+        return;
       }
       // 409 = already exists on server, just not in our list
       if (!tvsFiles.value.includes(fileName)) {
-        tvsFiles.value.push(fileName)
-        tvsFiles.value.sort()
+        tvsFiles.value.push(fileName);
+        tvsFiles.value.sort();
       }
     }
   }
 
-  toolboxMap.value.push(createToolboxEntry({ alias, file: fileName, description: desc }))
-  showCreateDialog.value = false
+  toolboxMap.value.push(
+    createToolboxEntry({ alias, file: fileName, description: desc })
+  );
+  showCreateDialog.value = false;
 
-  await openFileInEditor(fileName, !fileExists)
-  showMessage(`Toolbox "${alias}" 已创建，请保存映射表`, 'success')
+  await openFileInEditor(fileName, !fileExists);
+  showMessage(`Toolbox "${alias}" 已创建，请保存映射表`, "success");
 }
 
 /* ── Keyboard Shortcut ── */
 function handleKeydown(e: KeyboardEvent) {
-  if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-    e.preventDefault()
+  if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+    e.preventDefault();
     if (fileDirty.value) {
-      void saveToolboxFile()
-      return
+      void saveToolboxFile();
+      return;
     }
     if (mapDirty.value) {
-      void saveToolboxMap()
+      void saveToolboxMap();
     }
   }
 }
 
 function handleBeforeUnload(event: BeforeUnloadEvent) {
   if (!hasPendingChanges.value) {
-    return
+    return;
   }
 
-  event.preventDefault()
-  event.returnValue = ''
+  event.preventDefault();
+  event.returnValue = "";
 }
 
 /* ── Lifecycle ── */
 onMounted(() => {
-  loadToolboxMap()
-  loadTvsFiles()
-  document.addEventListener('keydown', handleKeydown)
-  window.addEventListener('beforeunload', handleBeforeUnload)
-})
+  loadToolboxMap();
+  loadTvsFiles();
+  document.addEventListener("keydown", handleKeydown);
+  window.addEventListener("beforeunload", handleBeforeUnload);
+});
 
 onUnmounted(() => {
-  document.removeEventListener('keydown', handleKeydown)
-  window.removeEventListener('beforeunload', handleBeforeUnload)
-})
+  document.removeEventListener("keydown", handleKeydown);
+  window.removeEventListener("beforeunload", handleBeforeUnload);
+});
 
 onBeforeRouteLeave(async () => {
   if (!hasPendingChanges.value) {
-    return true
+    return true;
   }
 
   return await askConfirm({
-    message: '存在未保存的 Toolbox 改动，确定要离开吗？',
+    message: "存在未保存的 Toolbox 改动，确定要离开吗？",
     danger: true,
-    confirmText: '放弃改动',
-  })
-})
+    confirmText: "放弃改动",
+  });
+});
 </script>
 
 <style scoped>
@@ -1076,9 +1342,7 @@ onBeforeRouteLeave(async () => {
   border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: var(--font-size-helper);
-  transition:
-    color 0.15s ease,
-    background-color 0.15s ease,
+  transition: color 0.15s ease, background-color 0.15s ease,
     transform 0.15s ease;
   white-space: nowrap;
 }
@@ -1155,7 +1419,7 @@ onBeforeRouteLeave(async () => {
 .file-content-editor {
   width: 100%;
   min-height: 400px;
-  font-family: 'Consolas', 'Monaco', monospace;
+  font-family: "Consolas", "Monaco", monospace;
   resize: vertical;
   padding: var(--space-3);
   background: var(--input-bg);
@@ -1243,9 +1507,18 @@ onBeforeRouteLeave(async () => {
   font-weight: 500;
 }
 
-.threshold-low  { background: var(--success-bg); color: var(--success-text); }
-.threshold-mid  { background: var(--warning-bg); color: var(--warning-text); }
-.threshold-high { background: var(--danger-bg); color: var(--danger-text); }
+.threshold-low {
+  background: var(--success-bg);
+  color: var(--success-text);
+}
+.threshold-mid {
+  background: var(--warning-bg);
+  color: var(--warning-text);
+}
+.threshold-high {
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}
 
 .block-folded-badge {
   padding: 2px 8px;
@@ -1310,7 +1583,7 @@ onBeforeRouteLeave(async () => {
   width: 100%;
   min-height: 100px;
   padding: 8px 12px;
-  font-family: 'Consolas', 'Monaco', monospace;
+  font-family: "Consolas", "Monaco", monospace;
   background: var(--input-bg);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);

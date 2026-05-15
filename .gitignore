@@ -90,9 +90,6 @@ out
 # Nuxt.js build / generate output
 .nuxt
 dist
-# 但保留 AdminPanel-Vue 构建产物，让用户开箱即用
-!AdminPanel-Vue/dist/
-!AdminPanel-Vue/dist/**
 
 # Gatsby files
 .cache/
@@ -225,3 +222,11 @@ Plugin/XiaohongshuFetch/config.env
 pluginStoreSources.json
 tmp/
 Plugin/.backup/
+
+# ==== 运行时数据 / 构建产物 / 工具文件 ====
+.vcp_versions/
+helloagents/
+test-rollback-fix.js
+Plugin/UserAuth/code.bin
+Plugin/VCPTaskAssistant/task-center-data.json
+Plugin/SkillBridge/skill-index.txt
