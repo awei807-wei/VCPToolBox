@@ -93,8 +93,11 @@ class KnowledgeBaseManager {
         this.db = new Database(dbPath); // 同步连接
         this.db.pragma('journal_mode = WAL');
         this.db.pragma('synchronous = NORMAL');
+        // 🛡️ SQLite 默认不启用外键；必须显式开启，避免文件删除后 chunks/file_tags 残留。
+        this.db.pragma('foreign_keys = ON');
 
         this._initSchema();
+        this._cleanupDatabaseOrphans();
 
         // 1. 初始化全局 Tag 索引 (优先从磁盘加载或从 SQLite 重建)
         const tagCapacity = 50000;
@@ -217,6 +220,19 @@ class KnowledgeBaseManager {
                 neighbor_count INTEGER NOT NULL,
                 computed_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
+            -- 🌟 TagMemo V8.2: 持久化的 Tag 对语义距离 (Pairwise Cosine Similarity)
+            -- 与 tag_intrinsic_residuals 平级，构成"节点质量 + 边距离"的物理量底座。
+            CREATE TABLE IF NOT EXISTS tag_pair_similarity (
+                tag_a INTEGER NOT NULL,
+                tag_b INTEGER NOT NULL,           -- 约定 tag_a < tag_b，消除重复
+                similarity REAL NOT NULL,         -- [-1, 1] 余弦，不预归一化
+                model_sig TEXT NOT NULL,          -- embedding 模型签名 (含维度)，跨模型自动失效
+                computed_at INTEGER NOT NULL,
+                PRIMARY KEY (tag_a, tag_b),
+                FOREIGN KEY (tag_a) REFERENCES tags(id) ON DELETE CASCADE,
+                FOREIGN KEY (tag_b) REFERENCES tags(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_pair_sim_model ON tag_pair_similarity(model_sig);
             CREATE TABLE IF NOT EXISTS kv_store (
                 key TEXT PRIMARY KEY,
                 value TEXT,
@@ -242,6 +258,97 @@ class KnowledgeBaseManager {
             this.db.prepare("ALTER TABLE file_tags ADD COLUMN position INTEGER NOT NULL DEFAULT 0").run();
         } catch (e) {
             // 如果列已存在，SQLite 会报错，忽略即可
+        }
+    }
+
+    /**
+     * 🧹 启动期数据库修复：
+     * - 清理旧版本在 foreign_keys 未开启时遗留的 chunks/file_tags 孤儿记录
+     * - 清理服务器关闭/重启期间漏掉 unlink 事件造成的已不存在文件记录
+     * - 若清理影响到持久化日记索引，删除旧索引文件，避免 stale chunk id 被再次加载
+     */
+    _cleanupDatabaseOrphans() {
+        try {
+            const affectedDiaries = new Set();
+
+            const missingFiles = this.db.prepare('SELECT id, path, diary_name FROM files').all()
+                .filter(row => !fsSync.existsSync(path.join(this.config.rootPath, row.path)));
+
+            missingFiles.forEach(row => affectedDiaries.add(row.diary_name));
+
+            const orphanChunkCount = this.db.prepare(`
+                SELECT COUNT(*) as count
+                FROM chunks c
+                LEFT JOIN files f ON c.file_id = f.id
+                WHERE f.id IS NULL
+            `).get().count || 0;
+
+            const cleanupTransaction = this.db.transaction(() => {
+                for (const row of missingFiles) {
+                    this.db.prepare('DELETE FROM file_tags WHERE file_id = ?').run(row.id);
+                    this.db.prepare('DELETE FROM chunks WHERE file_id = ?').run(row.id);
+                    this.db.prepare('DELETE FROM files WHERE id = ?').run(row.id);
+                }
+
+                this.db.prepare(`
+                    DELETE FROM file_tags
+                    WHERE file_id NOT IN (SELECT id FROM files)
+                       OR tag_id NOT IN (SELECT id FROM tags)
+                `).run();
+
+                this.db.prepare(`
+                    DELETE FROM chunks
+                    WHERE file_id NOT IN (SELECT id FROM files)
+                `).run();
+            });
+
+            cleanupTransaction();
+
+            for (const diaryName of affectedDiaries) {
+                this._deletePersistedDiaryIndex(diaryName);
+            }
+            if (orphanChunkCount > 0) {
+                // 孤儿 chunks 已经丢失 diary_name，只能保守删除全部持久化日记索引，后续从 SQLite 重建。
+                this._deleteAllPersistedDiaryIndexes();
+            }
+
+            if (missingFiles.length > 0 || orphanChunkCount > 0 || affectedDiaries.size > 0) {
+                console.warn(`[KnowledgeBase] 🧹 Startup cleanup complete. Removed ${missingFiles.length} missing file record(s), ${orphanChunkCount} orphan chunk(s), touched ${affectedDiaries.size} diary index(es).`);
+            }
+        } catch (e) {
+            console.error('[KnowledgeBase] ❌ Startup database cleanup failed:', e.message || e);
+        }
+    }
+
+    _deletePersistedDiaryIndex(diaryName) {
+        const shouldPersist = this.config.persistDefault || this.config.persistFolders.has(diaryName) || diaryName.endsWith('簇');
+        if (!shouldPersist) return;
+
+        const safeName = crypto.createHash('md5').update(diaryName).digest('hex');
+        const idxPath = path.join(this.config.storePath, `index_diary_${safeName}.usearch`);
+        const tmpPath = `${idxPath}.tmp`;
+
+        try {
+            if (fsSync.existsSync(idxPath)) {
+                fsSync.unlinkSync(idxPath);
+                console.warn(`[KnowledgeBase] 🧹 Removed stale persisted index for diary "${diaryName}". It will be rebuilt from SQLite.`);
+            }
+            if (fsSync.existsSync(tmpPath)) fsSync.unlinkSync(tmpPath);
+        } catch (e) {
+            console.warn(`[KnowledgeBase] ⚠️ Failed to remove stale persisted index for "${diaryName}": ${e.message}`);
+        }
+    }
+
+    _deleteAllPersistedDiaryIndexes() {
+        try {
+            const files = fsSync.readdirSync(this.config.storePath);
+            for (const file of files) {
+                if (!/^index_diary_[a-f0-9]{32}\.usearch(?:\.tmp)?$/i.test(file)) continue;
+                fsSync.unlinkSync(path.join(this.config.storePath, file));
+            }
+            console.warn('[KnowledgeBase] 🧹 Removed all persisted diary indexes because orphan chunks had lost diary ownership metadata.');
+        } catch (e) {
+            console.warn(`[KnowledgeBase] ⚠️ Failed to remove all persisted diary indexes: ${e.message}`);
         }
     }
 
@@ -280,11 +387,11 @@ class KnowledgeBaseManager {
             if (fsSync.existsSync(idxPath)) {
                 idx = VexusIndex.load(idxPath, null, this.config.dimension, capacity);
             } else {
-                // 💡 核心修复：如果索引文件不存在，说明是首次创建。
-                // 此时不应从数据库恢复，因为调用者（_flushBatch）正准备写入初始数据。
-                // 从数据库恢复的逻辑只适用于启动时加载或文件损坏后的重建。
-                console.log(`[KnowledgeBase] Index file not found for ${fileName}, creating a new empty one.`);
+                console.log(`[KnowledgeBase] Index file not found for ${fileName}, rebuilding from SQLite when possible.`);
                 idx = new VexusIndex(this.config.dimension, capacity);
+                if (filterDiaryName) {
+                    await this._recoverIndexFromDB(idx, tableType, filterDiaryName);
+                }
             }
         } catch (e) {
             console.error(`[KnowledgeBase] Index load error (${fileName}): ${e.message}`);
@@ -834,71 +941,126 @@ class KnowledgeBaseManager {
     }
 
     _startWatcher() {
-        if (!this.watcher) {
-            const handleFile = (filePath) => {
-                const relPath = path.relative(this.config.rootPath, filePath);
-                // 提取第一级目录作为日记本名称
-                const parts = relPath.split(path.sep);
-                const diaryName = parts.length > 1 ? parts[0] : 'Root';
+        if (this.watcher) return;
 
-                if (this.config.ignoreFolders.includes(diaryName)) return;
-                // 🛠️ 修复：ignorePrefixes/ignoreSuffixes 同时应用于日记本（文件夹）名和文件名
-                if (this.config.ignorePrefixes.some(prefix => diaryName.startsWith(prefix))) return;
-                if (this.config.ignoreSuffixes.some(suffix => diaryName.endsWith(suffix))) return;
-                const fileName = path.basename(relPath);
-                if (this.config.ignorePrefixes.some(prefix => fileName.startsWith(prefix))) return;
-                if (this.config.ignoreSuffixes.some(suffix => fileName.endsWith(suffix))) return;
-                if (!filePath.match(/\.(md|txt)$/i)) return;
-
-                this.pendingFiles.add(filePath);
-                if (this.pendingFiles.size >= this.config.maxBatchSize) {
-                    this._flushBatch();
-                } else {
-                    this._scheduleBatch();
-                }
-            };
-
-            const handleFileWithLock = async (filePath) => {
-                // 🛡️ BUG 2 修复：文件系统竞态保护
-                // 如果文件正在被快速修改，等待其稳定后再处理
-                try {
-                    const stats1 = await fs.stat(filePath);
-                    await new Promise(resolve => setTimeout(resolve, 500));
-                    const stats2 = await fs.stat(filePath);
-
-                    if (stats1.size === stats2.size && stats1.mtimeMs === stats2.mtimeMs) {
-                        handleFile(filePath);
-                    } else {
-                        // 如果还在变动，推迟 1 秒再试
-                        // console.log(`[KnowledgeBase] ⏳ File "${path.basename(filePath)}" is still being written, deferring...`);
-                        setTimeout(() => handleFileWithLock(filePath), 1000);
-                    }
-                } catch (e) {
-                    // 如果文件在检查期间被删除了，忽略即可
-                    if (e.code !== 'ENOENT') console.warn(`[KnowledgeBase] Stability check error:`, e.message);
-                }
-            };
-
-            const ignoredPatterns = [
-                '**/node_modules/**',
-                '**/.git/**',
-                '**/dist/**',
-                '**/target/**',
-                '**/image/**',
-                '**/.*'
-            ];
-            if (Array.isArray(this.config.ignoreFolders)) {
-                this.config.ignoreFolders.forEach(folder => {
-                    if (folder) ignoredPatterns.push(`**/${folder}/**`);
-                });
+        const handleFile = (filePath) => {
+            this.pendingFiles.add(filePath);
+            if (this.pendingFiles.size >= this.config.maxBatchSize) {
+                this._flushBatch();
+            } else {
+                this._scheduleBatch();
             }
+        };
 
-            this.watcher = chokidar.watch(this.config.rootPath, {
-                ignored: ignoredPatterns,
-                ignoreInitial: !this.config.fullScanOnStartup
-            });
-            this.watcher.on('add', handleFileWithLock).on('change', handleFileWithLock).on('unlink', fp => this._handleDelete(fp));
+        const handleFileWithLock = async (filePath) => {
+            // 🛡️ BUG 2 修复：文件系统竞态保护
+            // 如果文件正在被快速修改，等待其稳定后再处理
+            try {
+                const stats1 = await fs.stat(filePath);
+                await new Promise(resolve => setTimeout(resolve, 500));
+                const stats2 = await fs.stat(filePath);
+
+                if (stats1.size === stats2.size && stats1.mtimeMs === stats2.mtimeMs) {
+                    handleFile(filePath);
+                } else {
+                    // 如果还在变动，推迟 1 秒再试
+                    setTimeout(() => handleFileWithLock(filePath), 1000);
+                }
+            } catch (e) {
+                if (e.code !== 'ENOENT') console.warn(`[KnowledgeBase] Stability check error:`, e.message);
+            }
+        };
+
+        // 尝试加载并启动 Rust 高性能原生监听器
+        if (VexusIndex && VexusIndex.prototype && typeof VexusIndex.prototype.start_watch === 'undefined') {
+            // 动态获取导出的 VexusWatcher 类
+            try {
+                const vexusModule = require('./rust-vexus-lite');
+                if (vexusModule.VexusWatcher) {
+                    const rustWatcher = new vexusModule.VexusWatcher();
+                    
+                    const handleRustEvent = (...args) => {
+                        try {
+                            // napi-rs ThreadsafeFunction 在不同签名/版本下可能以
+                            // (payload) 或 (error, payload) 形式调用 JS 回调。
+                            // 因此这里从所有参数中选取第一个字符串作为事件载荷。
+                            const jsonPayload = args.find(arg => typeof arg === 'string');
+                            if (!jsonPayload) {
+                                console.warn('[KnowledgeBase] Ignored Rust watcher callback without string payload:', args);
+                                return;
+                            }
+
+                            const { event, path: filePath } = JSON.parse(jsonPayload);
+                            if (event === 'unlink') {
+                                this._handleDelete(filePath);
+                            } else {
+                                handleFileWithLock(filePath);
+                            }
+                        } catch (err) {
+                            console.error('[KnowledgeBase] Failed to parse Rust watcher event:', err);
+                        }
+                    };
+
+                    const startWatch = rustWatcher.startWatch || rustWatcher.start_watch;
+                    if (typeof startWatch !== 'function') {
+                        throw new Error('VexusWatcher startWatch/start_watch method not found');
+                    }
+
+                    startWatch.call(rustWatcher, {
+                        rootPath: this.config.rootPath,
+                        ignoreFolders: this.config.ignoreFolders || [],
+                        ignorePrefixes: this.config.ignorePrefixes || [],
+                        ignoreSuffixes: this.config.ignoreSuffixes || [],
+                    }, handleRustEvent);
+
+                    this.watcher = rustWatcher;
+                    this.watcherType = 'rust';
+                    console.log('[KnowledgeBase] 🦀 Using Rust native watcher.');
+                    return;
+                }
+            } catch (e) {
+                console.warn('[KnowledgeBase] ⚠️ Failed to initialize Rust Watcher, falling back to Chokidar:', e.message);
+            }
         }
+
+        // 降级方案：使用 Chokidar 监听
+        console.log('[KnowledgeBase] 🔄 Using Chokidar watcher fallback...');
+        const handleChokidarFile = (filePath) => {
+            const relPath = path.relative(this.config.rootPath, filePath);
+            const parts = relPath.split(path.sep);
+            const diaryName = parts.length > 1 ? parts[0] : 'Root';
+
+            if (this.config.ignoreFolders.includes(diaryName)) return;
+            if (this.config.ignorePrefixes.some(prefix => diaryName.startsWith(prefix))) return;
+            if (this.config.ignoreSuffixes.some(suffix => diaryName.endsWith(suffix))) return;
+            const fileName = path.basename(relPath);
+            if (this.config.ignorePrefixes.some(prefix => fileName.startsWith(prefix))) return;
+            if (this.config.ignoreSuffixes.some(suffix => fileName.endsWith(suffix))) return;
+            if (!filePath.match(/\.(md|txt)$/i)) return;
+
+            handleFileWithLock(filePath);
+        };
+
+        const ignoredPatterns = [
+            '**/node_modules/**',
+            '**/.git/**',
+            '**/dist/**',
+            '**/target/**',
+            '**/image/**',
+            '**/.*'
+        ];
+        if (Array.isArray(this.config.ignoreFolders)) {
+            this.config.ignoreFolders.forEach(folder => {
+                if (folder) ignoredPatterns.push(`**/${folder}/**`);
+            });
+        }
+
+        this.watcher = chokidar.watch(this.config.rootPath, {
+            ignored: ignoredPatterns,
+            ignoreInitial: !this.config.fullScanOnStartup
+        });
+        this.watcher.on('add', handleChokidarFile).on('change', handleChokidarFile).on('unlink', fp => this._handleDelete(fp));
+        this.watcherType = 'chokidar';
     }
 
     _scheduleBatch() {
@@ -1018,6 +1180,11 @@ class KnowledgeBaseManager {
 
                 const insertTag = this.db.prepare('INSERT INTO tags (name, vector) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET vector = excluded.vector');
                 const getTagId = this.db.prepare('SELECT id FROM tags WHERE name = ?');
+                // 🌟 V8.2: 向量更新失效钩子 — tag 向量被(重)写入时，删除涉及该 tag 的 sim 行，
+                // 由 Rust 增量补回，防止陈旧缓存污染。
+                const invalidatePairSim = this.db.prepare(
+                    'DELETE FROM tag_pair_similarity WHERE tag_a = ? OR tag_b = ?'
+                );
 
                 newTags.forEach((t, i) => {
                     if (!tagVectors[i]) return; // 🛡️ 跳过向量化失败的 tag
@@ -1027,11 +1194,13 @@ class KnowledgeBaseManager {
                     const id = getTagId.get(t).id;
                     tagCache.set(t, { id, vector: vecBuf });
                     tagUpdates.push({ id, vec: vecFloat });
+                    // 失效旧的 pairwise similarity 记录
+                    invalidatePairSim.run(id, id);
                 });
 
                 const insertFile = this.db.prepare('INSERT INTO files (path, diary_name, checksum, mtime, size, updated_at) VALUES (?, ?, ?, ?, ?, ?)');
-                const updateFile = this.db.prepare('UPDATE files SET checksum = ?, mtime = ?, size = ?, updated_at = ? WHERE id = ?');
-                const getFile = this.db.prepare('SELECT id FROM files WHERE path = ?');
+                const updateFile = this.db.prepare('UPDATE files SET checksum = ?, mtime = ?, size = ?, updated_at = ?, diary_name = ? WHERE id = ?');
+                const getFile = this.db.prepare('SELECT id, diary_name FROM files WHERE path = ?');
                 const getOldChunkIds = this.db.prepare('SELECT id FROM chunks WHERE file_id = ?'); // 💡 新增
                 const delChunks = this.db.prepare('DELETE FROM chunks WHERE file_id = ?');
                 const delRels = this.db.prepare('DELETE FROM file_tags WHERE file_id = ?');
@@ -1065,7 +1234,12 @@ class KnowledgeBaseManager {
                                 deletions.get(dName).push(...oldChunkIds);
                             }
 
-                            updateFile.run(doc.checksum, doc.mtime, doc.size, now, fileId);
+                            if (fRow.diary_name !== doc.diaryName) {
+                                if (!deletions.has(fRow.diary_name)) deletions.set(fRow.diary_name, []);
+                                deletions.get(fRow.diary_name).push(...oldChunkIds);
+                            }
+
+                            updateFile.run(doc.checksum, doc.mtime, doc.size, now, doc.diaryName, fileId);
                             delChunks.run(fileId);
                             delRels.run(fileId);
                         } else {
@@ -1103,7 +1277,17 @@ class KnowledgeBaseManager {
                 for (const [dName, chunkIds] of deletions) {
                     const idx = await this._getOrLoadDiaryIndex(dName);
                     if (idx && idx.remove) {
-                        chunkIds.forEach(id => idx.remove(id));
+                        chunkIds.forEach(id => {
+                            try {
+                                idx.remove(id);
+                            } catch (e) {
+                                // usearch 对不存在的 id 可能抛错；删除路径必须保持幂等，避免批处理重试循环。
+                                if (e.message && !/not found|missing|absent/i.test(e.message)) {
+                                    console.warn(`[KnowledgeBase] ⚠️ Failed to remove stale vector ${id} from "${dName}": ${e.message}`);
+                                }
+                            }
+                        });
+                        this._scheduleIndexSave(dName);
                     }
                 }
             }
@@ -1210,11 +1394,28 @@ class KnowledgeBaseManager {
             const row = this.db.prepare('SELECT id, diary_name FROM files WHERE path = ?').get(relPath);
             if (!row) return;
             const chunkIds = this.db.prepare('SELECT id FROM chunks WHERE file_id = ?').all(row.id);
-            this.db.prepare('DELETE FROM files WHERE id = ?').run(row.id);
+
+            // 🛡️ 不依赖 SQLite 外键级联：历史数据库/连接若未开启 foreign_keys，会留下 file_tags/chunks 垃圾，
+            // 大批量移动后会让 TagMemo 的延迟矩阵重建扫描膨胀数据，造成 CPU 长时间跑满。
+            const deleteTransaction = this.db.transaction(() => {
+                this.db.prepare('DELETE FROM file_tags WHERE file_id = ?').run(row.id);
+                this.db.prepare('DELETE FROM chunks WHERE file_id = ?').run(row.id);
+                this.db.prepare('DELETE FROM files WHERE id = ?').run(row.id);
+            });
+            deleteTransaction();
 
             const idx = await this._getOrLoadDiaryIndex(row.diary_name);
             if (idx && idx.remove) {
-                chunkIds.forEach(c => idx.remove(c.id));
+                chunkIds.forEach(c => {
+                    try {
+                        idx.remove(c.id);
+                    } catch (e) {
+                        // 删除事件可能乱序/重复；向量不存在不应导致错误风暴或后续处理停滞。
+                        if (e.message && !/not found|missing|absent/i.test(e.message)) {
+                            console.warn(`[KnowledgeBase] ⚠️ Failed to remove vector ${c.id} from "${row.diary_name}": ${e.message}`);
+                        }
+                    }
+                });
                 this._scheduleIndexSave(row.diary_name);
             }
         } catch (e) { console.error(`[KnowledgeBase] Delete error:`, e); }
@@ -1400,7 +1601,17 @@ class KnowledgeBaseManager {
 
     async shutdown() {
         console.log('[KnowledgeBase] shutting down...');
-        await this.watcher?.close();
+        if (this.watcher) {
+            if (this.watcherType === 'rust') {
+                const stopWatch = this.watcher.stopWatch || this.watcher.stop_watch;
+                if (typeof stopWatch === 'function') {
+                    stopWatch.call(this.watcher);
+                }
+            } else if (typeof this.watcher.close === 'function') {
+                await this.watcher.close();
+            }
+            this.watcher = null;
+        }
         if (this.ragParamsWatcher) {
             this.ragParamsWatcher.close();
             this.ragParamsWatcher = null;
