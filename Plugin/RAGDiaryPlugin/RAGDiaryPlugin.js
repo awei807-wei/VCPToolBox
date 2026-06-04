@@ -31,6 +31,158 @@ const dailyNoteRootPath = process.env.KNOWLEDGEBASE_ROOT_PATH || (projectBasePat
 
 const GLOBAL_SIMILARITY_THRESHOLD = 0.6; // 全局默认余弦相似度阈值
 
+const DEFAULT_META_THINKING_CHAINS = {
+    chains: {
+        default: {
+            clusters: ['前思维簇', '逻辑推理簇', '反思簇', '结果辩证簇', '陈词总结梳理簇'],
+            kSequence: [2, 1, 1, 1, 1]
+        }
+    },
+    description: 'VCP元思考链配置文件 - 定义递归推理链的簇顺序',
+    version: '1.0.0'
+};
+
+const DEFAULT_SEMANTIC_GROUPS_EDIT = {
+    config: {
+        min_cooccurrence_to_learn: 2,
+        min_cluster_size_for_new_group: 3,
+        auto_save_on_learn: true
+    },
+    groups: {
+        '编程学习': {
+            words: ['Python', '算法', '数据结构', '编程', '代码', 'debug', '函数', 'JavaScript', 'Node.js'],
+            auto_learned: [],
+            weight: 1.0,
+            vector_id: null,
+            last_activated: null,
+            activation_count: 0
+        },
+        '克莱恩·莫雷蒂': {
+            words: ['愚者', '克莱恩', '世界', '格尔曼', '道恩', '侦探', '塔罗会', '源堡', '灰雾'],
+            auto_learned: [],
+            weight: 1.2,
+            vector_id: null,
+            last_activated: null,
+            activation_count: 0
+        }
+    }
+};
+
+const CONFIG_SELF_CHECK_TARGETS = [
+    {
+        key: 'metaThinkingChains',
+        label: '思维簇',
+        fileName: 'meta_thinking_chains.json',
+        defaultValue: DEFAULT_META_THINKING_CHAINS
+    },
+    {
+        key: 'semanticGroups',
+        label: '语义捕网',
+        fileName: 'semantic_groups.edit.json',
+        defaultValue: DEFAULT_SEMANTIC_GROUPS_EDIT
+    },
+    {
+        key: 'ragTags',
+        label: 'RAG 标签',
+        fileName: 'rag_tags.json',
+        defaultFileName: 'rag_tags.json.example'
+    }
+];
+
+function normalizeJsonValue(value) {
+    if (Array.isArray(value)) {
+        return value.map(normalizeJsonValue);
+    }
+
+    if (value && typeof value === 'object') {
+        return Object.keys(value).sort().reduce((normalized, key) => {
+            normalized[key] = normalizeJsonValue(value[key]);
+            return normalized;
+        }, {});
+    }
+
+    return value;
+}
+
+function isSameJsonConfig(actual, expected) {
+    return JSON.stringify(normalizeJsonValue(actual)) === JSON.stringify(normalizeJsonValue(expected));
+}
+
+function formatRagDiaryConfigState(state) {
+    switch (state) {
+        case 'default':
+            return '仍为默认值';
+        case 'missing':
+            return '配置文件不存在';
+        case 'invalid_json':
+            return 'JSON 格式错误';
+        case 'unreadable':
+            return '配置文件不可读';
+        case 'custom':
+            return '已自定义';
+        case 'restored':
+            return '已从备份恢复';
+        case 'default_generated':
+            return '已生成默认配置';
+        default:
+            return state || '状态未知';
+    }
+}
+
+function formatRagDiaryConfigPathForMessage(filePath) {
+    return filePath ? path.basename(filePath) : '未知文件';
+}
+
+function buildRagDiaryConfigReadableMessage(warnings) {
+    const lines = [
+        `RAGDiaryPlugin 配置需要处理（${warnings.length} 项）：`
+    ];
+
+    warnings.forEach((file, index) => {
+        lines.push(`${index + 1}. ${file.label}：${formatRagDiaryConfigState(file.state)}`);
+        if ((file.state === 'invalid_json' || file.state === 'unreadable') && file.message) {
+            lines.push(`   说明：${file.message}`);
+        }
+        if (file.state === 'default_generated') {
+            lines.push('   说明：已使用默认配置落盘生成，请尽快确认并自定义。');
+        }
+        lines.push(`   文件：${formatRagDiaryConfigPathForMessage(file.filePath || file.path)}`);
+    });
+
+    lines.push('请在管理面板中配置思维簇、语义捕网和 RAG 标签，或恢复本地备份后重启/重连。');
+    return lines.join('\n');
+}
+
+function buildRagDiaryConfigRepairMessage(repairedFiles) {
+    const lines = [
+        `RAGDiaryPlugin 已自动修复配置（${repairedFiles.length} 项）：`
+    ];
+
+    repairedFiles.forEach((file, index) => {
+        const restoredFromBackup = file.state === 'restored';
+        lines.push(`${index + 1}. ${file.label}：${formatRagDiaryConfigState(file.state)}`);
+        lines.push(`   文件：${formatRagDiaryConfigPathForMessage(file.filePath || file.path)}`);
+        if (restoredFromBackup) {
+            lines.push(`   备份：${formatRagDiaryConfigPathForMessage(file.backupPath)}`);
+        } else if (file.defaultSource) {
+            lines.push(`   默认来源：${formatRagDiaryConfigPathForMessage(file.defaultSource)}`);
+        }
+        if (file.previousState) {
+            lines.push(`   修复前状态：${formatRagDiaryConfigState(file.previousState)}`);
+        }
+        if (file.archivePath) {
+            lines.push(`   原文件归档：${formatRagDiaryConfigPathForMessage(file.archivePath)}`);
+        }
+    });
+
+    lines.push('请检查修复后的配置是否符合预期。');
+    return lines.join('\n');
+}
+
+function getRagDiaryConfigBackupFileName(fileName) {
+    return fileName.replace(/\.json$/i, '.backup.json');
+}
+
 //####################################################################################
 //## TimeExpressionParser - 时间表达式解析器
 //####################################################################################
@@ -68,6 +220,300 @@ class RAGDiaryPlugin {
 
         // 🌟 V2折叠：FoldingStore 迷你数据库
         this.foldingStore = null;
+        this.configSelfCheckStatus = null;
+        this.configRepairStatus = null;
+        this._configSelfCheckPromise = null;
+    }
+
+    async _readJsonConfigFile(filePath) {
+        try {
+            const content = await fs.readFile(filePath, 'utf-8');
+            try {
+                return {
+                    ok: true,
+                    path: filePath,
+                    value: JSON.parse(content)
+                };
+            } catch (error) {
+                return {
+                    ok: false,
+                    path: filePath,
+                    state: 'invalid_json',
+                    error
+                };
+            }
+        } catch (error) {
+            return {
+                ok: false,
+                path: filePath,
+                state: error.code === 'ENOENT' ? 'missing' : 'unreadable',
+                error
+            };
+        }
+    }
+
+    async _writeJsonConfigFileAtomic(filePath, value) {
+        const tempFilePath = `${filePath}.${crypto.randomUUID()}.tmp`;
+        await fs.writeFile(tempFilePath, JSON.stringify(value, null, 2), 'utf-8');
+        try {
+            await fs.rename(tempFilePath, filePath);
+        } catch (error) {
+            try {
+                await fs.unlink(tempFilePath);
+            } catch (cleanupError) {
+                if (cleanupError.code !== 'ENOENT') {
+                    console.error(`[RAGDiaryPlugin] 清理临时配置文件失败: ${tempFilePath}`, cleanupError.message);
+                }
+            }
+            throw error;
+        }
+    }
+
+    async _archiveBrokenConfigFile(filePath) {
+        const timestamp = dayjs().format('YYYYMMDDHHmmss');
+        const archivePath = filePath.replace(/\.json$/i, `.broken.${timestamp}.json`);
+
+        try {
+            await fs.rename(filePath, archivePath);
+            return archivePath;
+        } catch (error) {
+            if (error.code === 'ENOENT') {
+                return null;
+            }
+            throw error;
+        }
+    }
+
+    async _getDefaultConfigValue(target) {
+        if (target.defaultValue) {
+            return {
+                ok: true,
+                value: target.defaultValue,
+                source: '内置默认配置'
+            };
+        }
+
+        const defaultFilePath = path.join(__dirname, target.defaultFileName);
+        const result = await this._readJsonConfigFile(defaultFilePath);
+        if (result.ok) {
+            return {
+                ...result,
+                source: defaultFilePath
+            };
+        }
+
+        return {
+            ...result,
+            message: `${target.label}默认配置读取失败: ${result.error?.message || result.state}`
+        };
+    }
+
+    _buildConfigState(target, filePath, readResult, defaultValue) {
+        if (!readResult.ok) {
+            const messages = {
+                missing: `${target.label}配置文件不存在`,
+                invalid_json: `${target.label}配置不是有效JSON: ${readResult.error?.message || '未知解析错误'}`,
+                unreadable: `${target.label}配置文件不可读: ${readResult.error?.message || '未知读取错误'}`
+            };
+
+            return {
+                key: target.key,
+                label: target.label,
+                filePath,
+                state: readResult.state,
+                message: messages[readResult.state] || `${target.label}配置读取失败`
+            };
+        }
+
+        const isDefault = isSameJsonConfig(readResult.value, defaultValue);
+        return {
+            key: target.key,
+            label: target.label,
+            filePath,
+            value: readResult.value,
+            state: isDefault ? 'default' : 'custom',
+            message: isDefault ? `${target.label}配置仍为默认值` : `${target.label}配置已自定义`
+        };
+    }
+
+    async _readConfigForSelfCheck(target) {
+        const filePath = path.join(__dirname, target.fileName);
+        const backupPath = path.join(__dirname, getRagDiaryConfigBackupFileName(target.fileName));
+        const defaultResult = await this._getDefaultConfigValue(target);
+
+        if (!defaultResult.ok) {
+            return {
+                key: target.key,
+                label: target.label,
+                filePath,
+                backupPath,
+                state: 'unreadable',
+                message: defaultResult.message
+            };
+        }
+
+        const currentResult = await this._readJsonConfigFile(filePath);
+        const currentState = this._buildConfigState(target, filePath, currentResult, defaultResult.value);
+        currentState.backupPath = backupPath;
+
+        if (currentState.state === 'custom') {
+            const backupResult = await this._readJsonConfigFile(backupPath);
+            const shouldWriteBackup = !backupResult.ok || !isSameJsonConfig(backupResult.value, currentState.value);
+            if (shouldWriteBackup) {
+                await this._writeJsonConfigFileAtomic(backupPath, currentState.value);
+                currentState.backupUpdated = true;
+                console.log(`[RAGDiaryPlugin] 已更新${target.label}配置备份: ${backupPath}`);
+            }
+            delete currentState.value;
+            return currentState;
+        }
+
+        const backupResult = await this._readJsonConfigFile(backupPath);
+        if (backupResult.ok && !isSameJsonConfig(backupResult.value, defaultResult.value)) {
+            const archivePath = (currentState.state === 'invalid_json' || currentState.state === 'unreadable')
+                ? await this._archiveBrokenConfigFile(filePath)
+                : null;
+            await this._writeJsonConfigFileAtomic(filePath, backupResult.value);
+            return {
+                key: target.key,
+                label: target.label,
+                filePath,
+                backupPath,
+                archivePath,
+                state: 'restored',
+                previousState: currentState.state,
+                message: `${target.label}配置已从备份恢复`
+            };
+        }
+
+        if (currentState.state === 'missing' || currentState.state === 'invalid_json' || currentState.state === 'unreadable') {
+            const archivePath = (currentState.state === 'invalid_json' || currentState.state === 'unreadable')
+                ? await this._archiveBrokenConfigFile(filePath)
+                : null;
+            await this._writeJsonConfigFileAtomic(filePath, defaultResult.value);
+            return {
+                key: target.key,
+                label: target.label,
+                filePath,
+                backupPath,
+                archivePath,
+                defaultSource: defaultResult.source,
+                state: 'default_generated',
+                previousState: currentState.state,
+                message: `${target.label}配置已使用默认值落盘生成`
+            };
+        }
+
+        if (backupResult.ok && isSameJsonConfig(backupResult.value, defaultResult.value)) {
+            currentState.backupState = 'default';
+        } else if (!backupResult.ok) {
+            currentState.backupState = backupResult.state;
+        }
+
+        delete currentState.value;
+        return currentState;
+    }
+
+    async _runConfigSelfCheck() {
+        if (this._configSelfCheckPromise) {
+            return this._configSelfCheckPromise;
+        }
+
+        this._configSelfCheckPromise = this._runConfigSelfCheckOnce().finally(() => {
+            this._configSelfCheckPromise = null;
+        });
+
+        return this._configSelfCheckPromise;
+    }
+
+    async _runConfigSelfCheckOnce() {
+        const results = [];
+        for (const target of CONFIG_SELF_CHECK_TARGETS) {
+            results.push(await this._readConfigForSelfCheck(target));
+        }
+        const files = results.reduce((acc, result) => {
+            acc[result.key] = {
+                label: result.label,
+                path: result.filePath,
+                state: result.state,
+                message: result.message,
+                backupPath: result.backupPath,
+                archivePath: result.archivePath,
+                defaultSource: result.defaultSource,
+                previousState: result.previousState,
+                backupUpdated: result.backupUpdated,
+                backupState: result.backupState
+            };
+            return acc;
+        }, {});
+        const warnings = results.filter(result => result.state !== 'custom' && result.state !== 'restored');
+        const repaired = results.filter(result => result.state === 'restored' || result.state === 'default_generated');
+
+        const status = {
+            type: 'rag_diary_config_self_check',
+            level: warnings.length > 0 ? 'warning' : 'info',
+            message: warnings.length > 0
+                ? buildRagDiaryConfigReadableMessage(warnings)
+                : 'RAGDiaryPlugin配置自检通过。',
+            details: {
+                files
+            }
+        };
+
+        this.configSelfCheckStatus = status;
+        this.configRepairStatus = repaired.length > 0
+            ? {
+                type: 'rag_diary_config_repaired',
+                level: 'warning',
+                message: buildRagDiaryConfigRepairMessage(repaired),
+                details: {
+                    files: repaired.reduce((acc, result) => {
+                        acc[result.key] = {
+                            label: result.label,
+                            path: result.filePath,
+                            state: result.state,
+                            previousState: result.previousState,
+                            backupPath: result.backupPath,
+                            archivePath: result.archivePath,
+                            defaultSource: result.defaultSource,
+                            message: result.message
+                        };
+                        return acc;
+                    }, {})
+                }
+            }
+            : null;
+
+        if (repaired.length > 0) {
+            console.warn('[RAGDiaryPlugin] 配置自检已自动修复:');
+            for (const repairedFile of repaired) {
+                const source = repairedFile.state === 'restored' ? repairedFile.backupPath : repairedFile.defaultSource;
+                console.warn(`[RAGDiaryPlugin] - ${repairedFile.message}: ${repairedFile.filePath} <- ${source}`);
+            }
+            this._pushConfigSelfCheckWarning(this.configRepairStatus);
+        }
+
+        if (warnings.length > 0) {
+            console.warn('[RAGDiaryPlugin] 配置自检发现问题:');
+            for (const warning of warnings) {
+                console.warn(`[RAGDiaryPlugin] - ${warning.message}: ${warning.filePath}`);
+            }
+            this._pushConfigSelfCheckWarning(status);
+        } else {
+            console.log('[RAGDiaryPlugin] 配置自检通过：思维簇、语义捕网和RAG标签配置均已自定义或已恢复。');
+        }
+
+        return status;
+    }
+
+    _pushConfigSelfCheckWarning(status) {
+        if (!this.pushVcpInfo) return;
+
+        try {
+            this.pushVcpInfo(status);
+        } catch (error) {
+            console.error('[RAGDiaryPlugin] 配置自检告警推送失败:', error.message || error);
+        }
     }
 
     async loadConfig() {
@@ -95,6 +541,8 @@ class RAGDiaryPlugin {
             maxSize: parseInt(process.env.AIMEMO_CACHE_MAX_SIZE) || 50,
             ttl: parseInt(process.env.AIMEMO_CACHE_TTL_MS) || 1800000
         });
+
+        await this._runConfigSelfCheck();
 
         // --- 加载 Rerank 配置 ---
         this.rerankConfig = {
@@ -171,6 +619,8 @@ class RAGDiaryPlugin {
             console.error('[RAGDiaryPlugin] 加载配置文件或处理缓存时发生严重错误:', error);
             this.ragConfig = {};
         }
+
+        await this.semanticGroups.initialize();
 
         // --- 加载元思考链配置 ---
         await this.metaThinkingManager.loadConfig();

@@ -16,7 +16,8 @@
 6. [SVD 结果去重器 (ResultDeduplicator)](#6-svd-结果去重器-resultdeduplicator)
 7. [RAG 参数热调控](#7-rag-参数热调控)
 8. [文件索引管道](#8-文件索引管道)
-9. [数学原理详解](#9-数学原理详解)
+9. [RAGDiaryPlugin 启动配置自检](#9-ragdiaryplugin-启动配置自检)
+10. [数学原理详解](#10-数学原理详解)
 
 ---
 
@@ -824,9 +825,32 @@ _buildCooccurrenceMatrix() {
 
 ---
 
-## 9. 数学原理详解
+## 9. RAGDiaryPlugin 启动配置自检
 
-### 9.1 Gram-Schmidt 正交化
+RAGDiaryPlugin 在自身 `initialize()` 阶段、读取思维链、语义组与 RAG 标签配置之前，会先执行一次配置自检，避免配置缺失或 JSON 损坏只在后台日志中被吞掉。
+
+| 检查文件 | 用途 | 异常处理 |
+|----------|------|----------|
+| `Plugin/RAGDiaryPlugin/meta_thinking_chains.json` | 元思考链/思维簇顺序配置 | 缺失、不可读、JSON 解析失败、仍为默认值都会输出 `console.warn` |
+| `Plugin/RAGDiaryPlugin/semantic_groups.edit.json` | 语义捕网编辑源文件，后续同步到 `semantic_groups.json` | 缺失、不可读、JSON 解析失败、仍为默认值都会输出 `console.warn` |
+| `Plugin/RAGDiaryPlugin/rag_tags.json` | RAG 日记本标签配置，默认基线来自 `rag_tags.json.example` | 缺失、不可读、JSON 解析失败、仍与 example 相同都会输出 `console.warn` |
+
+自检会按思维簇、语义捕网、RAG 标签的顺序串行执行；同一进程内若重复触发，会复用正在运行的 `_configSelfCheckPromise`，避免同一启动周期内重入。自检结果会记录在 `RAGDiaryPlugin.configSelfCheckStatus`，告警时通过 `pushVcpInfo` 推送 `rag_diary_config_self_check`；`WebSocketServer` 也会在 `VCPLog`、`VCPInfo`、`AdminPanel` 与 `DistributedServer` 连接时补发同类告警，避免启动期没有前端在线导致提示不可见。告警的 `message` 是面向用户的多行说明，结构化文件状态保留在 `details.files`。`SemanticGroupManager` 不再在构造函数里后台初始化，而是由 RAGDiaryPlugin 在自检之后显式 `await initialize()`，避免语义组加载抢在自检前发生。
+
+灾备生命周期：
+
+1. 当前配置是合法非默认 JSON 时，写入同目录备份：`meta_thinking_chains.backup.json`、`semantic_groups.edit.backup.json`、`rag_tags.backup.json`。
+2. 当前配置默认、缺失、不可读或 JSON 损坏，且备份存在并且不是默认值时，启动期自动用备份原子恢复当前配置。
+3. 当前配置缺失、不可读或 JSON 损坏，且没有可用非默认备份时，启动期会把默认配置落盘生成，保证后续加载路径不再静默失败。
+4. JSON 损坏或不可读的原文件会先归档为 `*.broken.<YYYYMMDDHHmmss>.json`，再执行备份恢复或默认生成。
+5. 发生备份恢复或默认生成时，额外记录 `RAGDiaryPlugin.configRepairStatus`，并推送 `rag_diary_config_repaired` 提醒；WebSocket 连接期也会补发该修复提醒。
+6. 默认值、损坏 JSON、缺失文件不会写入备份，避免污染灾备。
+
+---
+
+## 10. 数学原理详解
+
+### 10.1 Gram-Schmidt 正交化
 
 **目的**：将一组线性无关的向量转化为一组正交（垂直）的向量。
 
@@ -844,7 +868,7 @@ $$u_k = \frac{v_k - \sum_{j=1}^{k-1} \langle v_k, u_j \rangle u_j}{\|v_k - \sum_
 - 计算查询向量在正交基上的投影（已解释能量）
 - 残差 = 原始向量 - 投影（未解释能量）
 
-### 9.2 加权 PCA (基于 SVD)
+### 10.2 加权 PCA (基于 SVD)
 
 **目的**：找到数据的主要变化方向（主成分），同时考虑样本权重。
 
@@ -862,7 +886,7 @@ $$u_k = \frac{v_k - \sum_{j=1}^{k-1} \langle v_k, u_j \rangle u_j}{\|v_k - \sum_
 
 4. **Power Iteration**：迭代求解特征值和特征向量
 
-### 9.3 投影熵与逻辑深度
+### 10.3 投影熵与逻辑深度
 
 **投影概率分布**：
 $$p_k = \frac{\langle v, u_k \rangle^2}{\sum_{j=1}^{K} \langle v, u_j \rangle^2}$$
@@ -880,7 +904,7 @@ $$L = 1 - H_{norm}$$
 - 熵低 → 投影能量集中在少数几个主成分上 → 意图聚焦 → 逻辑深度高
 - 熵高 → 投影能量分散 → 意图发散 → 逻辑深度低
 
-### 9.4 跨域共振
+### 10.4 跨域共振
 
 **几何平均能量**（共激活强度）：
 $$C_{i,j} = \sqrt{E_i \cdot E_j}$$
@@ -890,7 +914,7 @@ $$C_{i,j} = \sqrt{E_i \cdot E_j}$$
 **总共振值**：
 $$R = \sum_{(i,j) \in Bridges} C_{i,j}$$
 
-### 9.5 能量分解
+### 10.5 能量分解
 
 **原始能量**：
 $$E_{original} = \|v\|^2$$

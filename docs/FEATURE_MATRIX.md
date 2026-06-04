@@ -373,9 +373,9 @@ module.exports = {
 | **入口文件** | `WebSocketServer.js` |
 | **WebSocket 路径** | `/vcp-distributed-server/VCP_Key=<key>` |
 | **触发条件** | VCPDistributedServer 连接主服务器 |
-| **处理流程** | 1. 连接建立 → 2. 发送 `register_tools` → 3. 发送 `report_ip` → 4. 接收 `execute_tool` 请求 → 5. 执行本地插件 → 6. 返回 `tool_result` |
+| **处理流程** | 1. 连接建立 → 2. 发送 `connection_ack` → 3. 自检 RAGDiary 思维簇/语义组/RAG标签配置并按需向实时客户端补发提醒 → 4. 发送 `register_tools` → 5. 发送 `report_ip` → 6. 接收 `execute_tool` 请求 → 7. 执行本地插件 → 8. 返回 `tool_result` |
 | **相关配置** | `VCP_Key` |
-| **输出格式** | 工具执行结果 JSON |
+| **输出格式** | `connection_ack`、按需 `rag_diary_config_self_check` / `rag_diary_config_repaired`、工具执行结果 JSON |
 | **限制条件** | 节点断开时自动注销所有工具 |
 
 ---

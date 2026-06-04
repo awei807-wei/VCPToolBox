@@ -26,6 +26,48 @@ const pendingToolRequests = new Map(); // 跨服务器工具调用的待处理�
 const distributedServerIPs = new Map(); // 新增：存储分布式服务器的IP信息
 const waitingControlClients = new Map(); // 新增：存储等待页面更新的ChromeControl客户端 (clientId -> requestId)
 const VCP_ASYNC_RESULTS_DIR = path.join(__dirname, 'VCPAsyncResults');
+const RAG_DIARY_PLUGIN_DIR = path.join(__dirname, 'Plugin', 'RAGDiaryPlugin');
+const RAG_DIARY_META_THINKING_CHAINS_PATH = path.join(RAG_DIARY_PLUGIN_DIR, 'meta_thinking_chains.json');
+const RAG_DIARY_SEMANTIC_GROUPS_EDIT_PATH = path.join(RAG_DIARY_PLUGIN_DIR, 'semantic_groups.edit.json');
+const RAG_DIARY_RAG_TAGS_PATH = path.join(RAG_DIARY_PLUGIN_DIR, 'rag_tags.json');
+const RAG_DIARY_RAG_TAGS_EXAMPLE_PATH = path.join(RAG_DIARY_PLUGIN_DIR, 'rag_tags.json.example');
+
+const DEFAULT_RAG_DIARY_META_THINKING_CHAINS = {
+    chains: {
+        default: {
+            clusters: ['前思维簇', '逻辑推理簇', '反思簇', '结果辩证簇', '陈词总结梳理簇'],
+            kSequence: [2, 1, 1, 1, 1]
+        }
+    },
+    description: 'VCP元思考链配置文件 - 定义递归推理链的簇顺序',
+    version: '1.0.0'
+};
+
+const DEFAULT_RAG_DIARY_SEMANTIC_GROUPS_EDIT = {
+    config: {
+        min_cooccurrence_to_learn: 2,
+        min_cluster_size_for_new_group: 3,
+        auto_save_on_learn: true
+    },
+    groups: {
+        '编程学习': {
+            words: ['Python', '算法', '数据结构', '编程', '代码', 'debug', '函数', 'JavaScript', 'Node.js'],
+            auto_learned: [],
+            weight: 1.0,
+            vector_id: null,
+            last_activated: null,
+            activation_count: 0
+        },
+        '克莱恩·莫雷蒂': {
+            words: ['愚者', '克莱恩', '世界', '格尔曼', '道恩', '侦探', '塔罗会', '源堡', '灰雾'],
+            auto_learned: [],
+            weight: 1.2,
+            vector_id: null,
+            last_activated: null,
+            activation_count: 0
+        }
+    }
+};
 
 function generateClientId() {
     // 用于生成客户端ID和请求ID
@@ -46,6 +88,194 @@ async function ensureAsyncResultsDir() {
     } catch (error) {
         console.error(`[WebSocketServer] Failed to create VCPAsyncResults directory: ${VCP_ASYNC_RESULTS_DIR}`, error);
     }
+}
+
+function normalizeJsonValue(value) {
+    if (Array.isArray(value)) {
+        return value.map(normalizeJsonValue);
+    }
+
+    if (value && typeof value === 'object') {
+        return Object.keys(value).sort().reduce((normalized, key) => {
+            normalized[key] = normalizeJsonValue(value[key]);
+            return normalized;
+        }, {});
+    }
+
+    return value;
+}
+
+function isSameJsonConfig(actual, expected) {
+    return JSON.stringify(normalizeJsonValue(actual)) === JSON.stringify(normalizeJsonValue(expected));
+}
+
+function formatRagDiaryConfigState(state) {
+    switch (state) {
+        case 'default':
+            return '仍为默认值';
+        case 'missing':
+            return '配置文件不存在';
+        case 'invalid_json':
+            return 'JSON 格式错误';
+        case 'unreadable':
+            return '配置文件不可读';
+        case 'custom':
+            return '已自定义';
+        case 'restored':
+            return '已从备份恢复';
+        case 'default_generated':
+            return '已生成默认配置';
+        default:
+            return state || '状态未知';
+    }
+}
+
+function formatRagDiaryConfigPathForMessage(filePath) {
+    return filePath ? path.basename(filePath) : '未知文件';
+}
+
+function buildRagDiaryConfigReadableMessage(warnings) {
+    const lines = [
+        `RAGDiaryPlugin 配置需要处理（${warnings.length} 项）：`
+    ];
+
+    warnings.forEach((file, index) => {
+        lines.push(`${index + 1}. ${file.label}：${formatRagDiaryConfigState(file.state)}`);
+        if ((file.state === 'invalid_json' || file.state === 'unreadable') && file.message) {
+            lines.push(`   说明：${file.message}`);
+        }
+        if (file.state === 'default_generated') {
+            lines.push('   说明：已使用默认配置落盘生成，请尽快确认并自定义。');
+        }
+        lines.push(`   文件：${formatRagDiaryConfigPathForMessage(file.path)}`);
+    });
+
+    lines.push('请在管理面板中配置思维簇、语义捕网和 RAG 标签，或恢复本地备份后重启/重连。');
+    return lines.join('\n');
+}
+
+async function readRagDiaryJsonConfig(filePath) {
+    try {
+        const content = await fs.readFile(filePath, 'utf-8');
+        return {
+            ok: true,
+            value: JSON.parse(content)
+        };
+    } catch (error) {
+        return {
+            ok: false,
+            state: error instanceof SyntaxError ? 'invalid_json' : (error.code === 'ENOENT' ? 'missing' : 'unreadable'),
+            error
+        };
+    }
+}
+
+async function readRagDiaryConfigState(filePath, label, expectedConfig) {
+    try {
+        const content = await fs.readFile(filePath, 'utf-8');
+        let parsed;
+        try {
+            parsed = JSON.parse(content);
+        } catch (error) {
+            return {
+                label,
+                path: filePath,
+                state: 'invalid_json',
+                message: `${label}配置不是有效JSON: ${error.message}`
+            };
+        }
+
+        const isDefault = isSameJsonConfig(parsed, expectedConfig);
+        return {
+            label,
+            path: filePath,
+            state: isDefault ? 'default' : 'custom',
+            message: isDefault ? `${label}配置仍为默认值` : `${label}配置已自定义`
+        };
+    } catch (error) {
+        const state = error.code === 'ENOENT' ? 'missing' : 'unreadable';
+        return {
+            label,
+            path: filePath,
+            state,
+            message: state === 'missing'
+                ? `${label}配置文件不存在`
+                : `${label}配置文件不可读: ${error.message}`
+        };
+    }
+}
+
+async function readRagDiaryConfigStateFromDefaultFile(filePath, label, defaultFilePath) {
+    const defaultConfig = await readRagDiaryJsonConfig(defaultFilePath);
+    if (!defaultConfig.ok) {
+        return {
+            label,
+            path: filePath,
+            state: 'unreadable',
+            message: `${label}默认配置读取失败: ${defaultConfig.error?.message || defaultConfig.state}`,
+            defaultPath: defaultFilePath
+        };
+    }
+
+    return readRagDiaryConfigState(filePath, label, defaultConfig.value);
+}
+
+function getRagDiaryPluginConfigNotifications() {
+    const ragPlugin = pluginManager?.getServiceModule?.('RAGDiaryPlugin');
+    if (!ragPlugin) return [];
+
+    const notifications = [];
+    if (ragPlugin.configRepairStatus) {
+        notifications.push(ragPlugin.configRepairStatus);
+    }
+    if (ragPlugin.configSelfCheckStatus?.level === 'warning') {
+        notifications.push(ragPlugin.configSelfCheckStatus);
+    }
+    return notifications;
+}
+
+async function buildFallbackRagDiaryConfigNotifications() {
+    const [metaThinkingChains, semanticGroups, ragTags] = await Promise.all([
+        readRagDiaryConfigState(RAG_DIARY_META_THINKING_CHAINS_PATH, '思维簇', DEFAULT_RAG_DIARY_META_THINKING_CHAINS),
+        readRagDiaryConfigState(RAG_DIARY_SEMANTIC_GROUPS_EDIT_PATH, '语义捕网', DEFAULT_RAG_DIARY_SEMANTIC_GROUPS_EDIT),
+        readRagDiaryConfigStateFromDefaultFile(RAG_DIARY_RAG_TAGS_PATH, 'RAG 标签', RAG_DIARY_RAG_TAGS_EXAMPLE_PATH)
+    ]);
+    const files = { metaThinkingChains, semanticGroups, ragTags };
+    const warnings = Object.values(files).filter(file => file.state !== 'custom');
+
+    if (warnings.length > 0) {
+        return [{
+            type: 'rag_diary_config_self_check',
+            level: 'warning',
+            message: buildRagDiaryConfigReadableMessage(warnings),
+            details: { files }
+        }];
+    }
+
+    return [];
+}
+
+async function buildRagDiaryConfigNotifications() {
+    const pluginNotifications = getRagDiaryPluginConfigNotifications();
+    if (pluginNotifications.length > 0) {
+        return pluginNotifications;
+    }
+
+    return buildFallbackRagDiaryConfigNotifications();
+}
+
+async function sendRagDiaryDefaultConfigNotification(ws) {
+    const notifications = await buildRagDiaryConfigNotifications();
+    for (const notification of notifications) {
+        if (ws.readyState !== WebSocket.OPEN) return;
+        ws.send(JSON.stringify(notification));
+    }
+}
+
+function sendRagDiaryDefaultConfigNotificationOnConnect(ws) {
+    sendRagDiaryDefaultConfigNotification(ws).catch(error => {
+        writeLog(`RAGDiary default config self-check failed for ${ws.clientType || 'unknown client'}: ${error.message}`);
+    });
 }
 
 async function handleDistributedPluginCallback(serverId, message) {
@@ -241,8 +471,10 @@ function initialize(httpServer, config) {
         // 发送连接确认消息给特定类型的客户端
         if (ws.clientType === 'VCPLog') {
             ws.send(JSON.stringify({ type: 'connection_ack', message: 'WebSocket connection successful for VCPLog.' }));
+            sendRagDiaryDefaultConfigNotificationOnConnect(ws);
         } else if (ws.clientType === 'VCPInfo') { // 新增 VCPInfo 确认消息
             ws.send(JSON.stringify({ type: 'connection_ack', message: 'WebSocket connection successful for VCPInfo.' }));
+            sendRagDiaryDefaultConfigNotificationOnConnect(ws);
         } else if (ws.clientType === 'DistributedServer') {
             // 分布式服务器连接确认，告知分配的 serverId
             ws.send(JSON.stringify({
@@ -253,6 +485,9 @@ function initialize(httpServer, config) {
                     clientId: ws.clientId
                 }
             }));
+            sendRagDiaryDefaultConfigNotificationOnConnect(ws);
+        } else if (ws.clientType === 'AdminPanel') {
+            sendRagDiaryDefaultConfigNotificationOnConnect(ws);
         }
         // 可以根据 ws.clientType 或其他标识符发送不同的欢迎消息
 
