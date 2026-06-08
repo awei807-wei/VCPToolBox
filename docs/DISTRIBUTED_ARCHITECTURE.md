@@ -109,6 +109,11 @@ VCP 支持 **6 种客户端类型**，通过 WebSocket URL 路径区分：
 }
 ```
 
+连接确认后，服务器会对 `Plugin/RAGDiaryPlugin/meta_thinking_chains.json`、
+`Plugin/RAGDiaryPlugin/semantic_groups.edit.json` 与 `Plugin/RAGDiaryPlugin/rag_tags.json` 执行一次配置自检。若任一配置仍为默认值，或任一配置缺失、不可读、JSON 解析失败，会向
+`DistributedServer`、`VCPLog`、`VCPInfo` 与 `AdminPanel` 连接补发 `rag_diary_config_self_check` 提醒；若三项配置都已改为非默认值，则不会发送额外提醒。
+若启动期已从备份自动恢复任一配置，或因缺失/损坏而落盘生成默认配置，还会额外补发 `rag_diary_config_repaired` 提醒。提醒的 `message` 字段是面向用户的多行文本，机器可读状态保留在 `details.files`。
+
 ```javascript
 // 连接时初始化
 distributedServers.set(serverId, {
@@ -717,6 +722,8 @@ ws.on('error', (error) => {
 | 类型 | 方向 | 发送者 | 说明 |
 |------|------|--------|------|
 | `connection_ack` | S→C | 服务器 | 连接确认 |
+| `rag_diary_config_self_check` | S→C | 服务器 | 客户端连接后的 RAGDiary 思维簇/语义组/RAG标签默认配置或读取失败提醒 |
+| `rag_diary_config_repaired` | S→C | 服务器 | RAGDiary 配置已从本地备份恢复或默认配置已落盘生成的提醒 |
 | `heartbeat` | C→S | Observer | 心跳请求 |
 | `heartbeat_ack` | S→C | 服务器 | 心跳响应 |
 | `register_tools` | C→S | Distributed | 注册工具 |
